@@ -73,127 +73,58 @@ source venv/bin/activate
 pip install flask gunicorn
 ```
 
-### 3.2. `~/myserver/app.py`
+### 3.2. Mã nguồn
 
-```python
-from flask import Flask, jsonify, render_template
+Chép các file sau từ repo vào `~/myserver` (hoặc clone repo):
 
-app = Flask(__name__)
-
-
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-
-@app.route("/api/hello")
-def hello():
-    return jsonify(
-        {
-            "message": "Hello from my personal server!",
-            "backend": "Flask",
-            "status": "online",
-        }
-    )
-
-
-@app.route("/api/info")
-def info():
-    return jsonify({"server": "My Linux Mint PC", "api_version": "1.0"})
-
-
-if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8000, debug=False)
+```
+app.py                    # Flask + SQLite: toàn bộ route và API
+templates/base.html       # layout chung
+templates/login.html
+templates/register.html
+templates/chat.html
+static/style.css
+static/app.js
 ```
 
-> Không dùng `app.run()` trong production. File này chỉ để chạy thử;
-> thực tế Gunicorn sẽ import `app` từ đây.
+Ứng dụng tự tạo `data/app.db` và `data/secret_key` ở lần chạy đầu tiên,
+không cần migration thủ công.
 
-### 3.3. `~/myserver/templates/index.html`
+Các route chính:
 
-```html
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport"
-          content="width=device-width, initial-scale=1.0">
+| Route | Mô tả |
+|---|---|
+| `GET /` | Trang chat (yêu cầu đăng nhập) |
+| `GET/POST /register` | Đăng ký tài khoản |
+| `GET/POST /login` | Đăng nhập |
+| `POST /logout` | Đăng xuất (có CSRF) |
+| `GET /api/chat?since=<id>` | Tin phòng chung mới hơn `id` |
+| `POST /api/chat` | Gửi tin phòng chung |
+| `GET /api/dm/<username>?since=<id>` | Tin riêng với một người |
+| `POST /api/dm/<username>` | Gửi tin riêng |
+| `GET /api/users` | Danh sách thành viên + trạng thái online |
+| `POST /api/heartbeat` | Cập nhật "đang online" |
+| `GET /api/hello`, `/api/info` | API kiểm tra cũ |
 
-    <title>My Personal Server</title>
+> Mọi API `POST` bắt buộc header `X-CSRF-Token` (giá trị lấy từ
+> `window.APP.csrf` trong trang chat). Thiếu header trả `403`.
 
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #111827;
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-        }
+### 3.3. Cấu trúc thư mục
 
-        .card {
-            background: #1f2937;
-            padding: 40px;
-            border-radius: 15px;
-            width: 500px;
-            text-align: center;
-        }
-
-        button {
-            background: #3b82f6;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-
-        #result {
-            margin-top: 20px;
-            background: #111827;
-            padding: 15px;
-            border-radius: 8px;
-        }
-    </style>
-</head>
-
-<body>
-
-<div class="card">
-
-    <h1>My Personal Server</h1>
-
-    <p>
-        Frontend này đang được gửi từ máy tính cá nhân của tôi.
-    </p>
-
-    <button onclick="callBackend()">
-        Call Backend API
-    </button>
-
-    <div id="result">
-        Waiting...
-    </div>
-
-</div>
-
-<script>
-
-async function callBackend() {
-
-    const response = await fetch("/api/hello");
-
-    const data = await response.json();
-
-    document.getElementById("result").innerText =
-        JSON.stringify(data, null, 2);
-}
-
-</script>
-
-</body>
-</html>
+```
+~/myserver/
+├── app.py
+├── templates/
+│   ├── base.html
+│   ├── login.html
+│   ├── register.html
+│   └── chat.html
+├── static/
+│   ├── style.css
+│   └── app.js
+└── data/                 # tự tạo, đã gitignore
+    ├── app.db
+    └── secret_key
 ```
 
 ### 3.4. Chạy thử
@@ -698,12 +629,23 @@ Sau khi reboot, kiểm tra lại mục 1–4 mà không đăng nhập thủ côn
 ```
 ~/myserver/
 ├── app.py
-├── templates/index.html
+├── templates/
+│   ├── base.html
+│   ├── login.html
+│   ├── register.html
+│   └── chat.html
+├── static/
+│   ├── style.css
+│   └── app.js
+├── data/                           (tự tạo, gitignore)
+│   ├── app.db
+│   └── secret_key                  (chmod 600)
 ├── venv/
 ├── setup-ngrok.sh
 ├── setup-firewall.sh
 ├── url.sh
-└── README.md
+├── README.md
+└── SETUP.md
 
 ~/.config/systemd/user/
 ├── myserver.service

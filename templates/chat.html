@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Chat — MyServer{% endblock %}
+{% block body_class %}chat-page{% endblock %}
+
+{% block body %}
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-head">
+            <div class="logo">💬 <span>MyServer</span></div>
+            <button type="button" class="icon-btn mobile-only" id="close-sidebar" aria-label="Đóng">✕</button>
+        </div>
+
+        <button type="button" class="conv active" id="room-btn">
+            <span class="hash">#</span>
+            <span class="conv-name">Phòng chung</span>
+        </button>
+
+        <div class="side-title">Thành viên <span id="online-count">0</span></div>
+        <div class="user-list" id="user-list"></div>
+
+        <div class="sidebar-foot">
+            <div class="avatar" id="me-avatar"></div>
+            <div class="me-info">
+                <strong id="me-name"></strong>
+                <span id="me-handle"></span>
+            </div>
+            <form method="post" action="{{ url_for('logout') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf }}">
+                <button type="submit" class="icon-btn" title="Đăng xuất" aria-label="Đăng xuất">⏻</button>
+            </form>
+        </div>
+    </aside>
+
+    <main class="chat">
+        <header class="chat-head">
+            <button type="button" class="icon-btn mobile-only" id="open-sidebar" aria-label="Mở danh sách">☰</button>
+            <div>
+                <h2 id="conv-title"># Phòng chung</h2>
+                <span class="muted" id="conv-sub">Mọi người trong server</span>
+            </div>
+            <span class="status" id="conn-status" title="Đã kết nối">●</span>
+        </header>
+
+        <div class="messages" id="messages" aria-live="polite"></div>
+
+        <form class="composer" id="composer">
+            <textarea id="input" rows="1" maxlength="2000"
+                      placeholder="Nhập tin nhắn… (Enter để gửi, Shift+Enter xuống dòng)"></textarea>
+            <button type="submit" class="btn-primary" id="send">Gửi</button>
+        </form>
+    </main>
+</div>
+
+<script>
+    window.APP = {{ {
+        "me": {
+            "id": me["id"],
+            "username": me["username"],
+            "display_name": me["display_name"],
+        },
+        "csrf": csrf,
+    } | tojson }};
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

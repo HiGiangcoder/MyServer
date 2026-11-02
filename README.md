@@ -1,7 +1,28 @@
-# MyServer — Flask + Nginx + DuckDNS
+# MyServer — Chat + Flask + Nginx
 
-> Muốn dựng lại toàn bộ từ máy trắng (kèm nội dung tất cả file cấu hình):
-> xem [`SETUP.md`](SETUP.md). File này chỉ tóm tắt trạng thái và cách vận hành.
+> Muốn dựng lại toàn bộ từ máy trắng: xem [`SETUP.md`](SETUP.md).
+> File này tóm tắt trạng thái và cách vận hành.
+
+## App chat
+
+Ứng dụng mạng xã hội nhắn tin đơn giản:
+
+- Đăng ký / đăng nhập bằng tài khoản nội bộ (mật khẩu hash PBKDF2).
+- **Phòng chung**: mọi người trong server nhắn với nhau.
+- **Nhắn tin riêng 1-1**: bấm vào tên thành viên ở sidebar.
+- Danh sách thành viên + chấm xanh online (heartbeat 25s).
+- Tin nhắn tự cập nhật mỗi 2 giây (polling, không cần WebSocket).
+- Giao diện responsive, Enter để gửi, Shift+Enter xuống dòng.
+- Chống XSS: render bằng `textContent`; API yêu cầu CSRF token.
+
+Công nghệ: Flask + SQLite (`data/app.db`), giao diện vanilla JS/CSS,
+không thêm dependency nào ngoài Flask.
+
+Đăng ký tài khoản đầu tiên tại `https://<domain>/register`, sau đó gửi link
+cho người khác tự đăng ký.
+
+> Lưu ý: không có xác thực email, quên mật khẩu hay rate limiting. Phù hợp
+> cho nhóm nhỏ; muốn công khai rộng nên thêm các phần đó.
 
 ## Kiến trúc
 
@@ -23,7 +44,10 @@ Lấy URL công khai hiện tại:
 
 | Thành phần | Vị trí |
 |---|---|
-| Flask app | `~/myserver/app.py` |
+| Flask app (chat) | `~/myserver/app.py` |
+| Template | `templates/` (base, login, register, chat) |
+| Giao diện | `static/style.css`, `static/app.js` |
+| Database + secret | `data/app.db`, `data/secret_key` (đã gitignore) |
 | Gunicorn (3 worker) | systemd user unit `myserver.service` |
 | Nginx reverse proxy | `/etc/nginx/sites-available/myserver` |
 | Cập nhật DuckDNS | `~/duckdns/duck.sh` + cron `*/5 * * * *` |
@@ -48,6 +72,26 @@ sudo tail -f /var/log/nginx/access.log
 # Test nội bộ
 curl -H "Host: gianglab.duckdns.org" http://127.0.0.1/api/hello
 ```
+
+### Dữ liệu chat
+
+```bash
+# Xem nhanh số tài khoản / tin nhắn
+sqlite3 ~/myserver/data/app.db \
+  "SELECT (SELECT COUNT(*) FROM users) AS users,
+          (SELECT COUNT(*) FROM messages) AS messages;"
+
+# Backup
+cp ~/myserver/data/app.db ~/myserver/data/app-$(date +%F).db
+
+# Xóa sạch toàn bộ tài khoản + tin nhắn (reset)
+systemctl --user stop myserver
+rm ~/myserver/data/app.db
+systemctl --user start myserver        # tự tạo DB rỗng
+```
+
+> `data/secret_key` và `data/app.db` đều nằm trong `.gitignore`.
+> Không commit hai file này.
 
 ## ngrok static domain (đang bật)
 

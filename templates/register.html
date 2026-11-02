@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Đăng ký — MyServer{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block body %}
+<main class="auth-card">
+    <div class="auth-logo">💬</div>
+    <h1>Tạo tài khoản</h1>
+    <p class="muted">Tham gia phòng chat của MyServer.</p>
+
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+
+    <form method="post" action="{{ url_for('register') }}">
+        <label for="username">Tên đăng nhập</label>
+        <input id="username" name="username" value="{{ values.username }}"
+               autocomplete="username" autocapitalize="none" required autofocus>
+        <small class="hint">3–20 ký tự: chữ, số, dấu gạch dưới.</small>
+
+        <label for="display_name">Tên hiển thị</label>
+        <input id="display_name" name="display_name" value="{{ values.display_name }}"
+               maxlength="40" required>
+
+        <label for="password">Mật khẩu</label>
+        <input id="password" name="password" type="password" minlength="6"
+               autocomplete="new-password" required>
+        <small class="hint">Ít nhất 6 ký tự.</small>
+
+        <button type="submit" class="btn-primary">Đăng ký</button>
+    </form>
+
+    <p class="switch">Đã có tài khoản?
+        <a href="{{ url_for('login') }}">Đăng nhập</a>
+    </p>
+</main>
+{% endblock %}
