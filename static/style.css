@@ -12,6 +12,10 @@
     --radius: 14px;
 }
 
+html[data-font="sm"] { --msg-size: 13px; }
+html[data-font="md"] { --msg-size: 14.5px; }
+html[data-font="lg"] { --msg-size: 16.5px; }
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -335,7 +339,7 @@ a { color: #93c5fd; }
     border: 1px solid #ffffff0a;
     padding: 10px 14px;
     border-radius: 14px 14px 14px 4px;
-    font-size: 14.5px;
+    font-size: var(--msg-size, 14.5px);
     line-height: 1.45;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -414,3 +418,222 @@ a { color: #93c5fd; }
     .chat-head { padding: 12px 14px; }
     .composer { padding: 10px 12px 14px; }
 }
+
+/* ---------------- Ẩn avatar tin nhắn ---------------- */
+
+html[data-avatars="0"] .msg .avatar { display: none; }
+
+/* ---------------- Trang cài đặt ---------------- */
+
+.settings-page { overflow-y: auto; }
+
+.settings-wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 28px 20px 70px;
+}
+
+.settings-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 20px;
+}
+
+.settings-head h1 { margin: 0; font-size: 24px; }
+.settings-head .muted { font-size: 13px; }
+
+.card {
+    background: linear-gradient(180deg, #1f2937, #182130);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 24px;
+    margin-bottom: 18px;
+}
+
+.card h2 { margin: 0 0 4px; font-size: 18px; }
+.card > .muted { margin: 0 0 18px; font-size: 14px; }
+
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.field { margin-bottom: 14px; }
+
+.field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #cbd5e1;
+    margin-bottom: 6px;
+}
+
+.field input {
+    width: 100%;
+    padding: 10px 12px;
+    background: #0f172a;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+}
+
+.field input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px #3b82f633;
+}
+
+.segmented { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.segmented label {
+    padding: 9px 15px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #0f172a;
+    cursor: pointer;
+    font-size: 14px;
+    user-select: none;
+}
+
+.segmented label:hover { border-color: #475569; }
+.segmented label.checked { border-color: var(--accent); background: #3b82f61f; }
+.segmented input { display: none; }
+
+.toggles { display: flex; flex-direction: column; margin: 8px 0 20px; }
+
+.toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 13px 0;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+}
+
+.toggle-row:first-child { border-top: none; }
+.toggle-row strong { display: block; font-size: 14.5px; font-weight: 600; }
+.toggle-row small { color: var(--muted); font-size: 12.5px; }
+
+.switch {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 44px;
+    height: 25px;
+    flex: 0 0 44px;
+    border-radius: 999px;
+    background: #334155;
+    position: relative;
+    cursor: pointer;
+    transition: background .15s;
+    margin: 0;
+}
+
+.switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform .15s;
+}
+
+.switch:checked { background: var(--accent); }
+.switch:checked::after { transform: translateX(19px); }
+
+.btn-danger {
+    background: linear-gradient(135deg, #ef4444, #b91c1c);
+    border: none;
+    color: #fff;
+    padding: 11px 20px;
+    border-radius: 10px;
+    font-weight: 600;
+    transition: filter .15s, transform .1s;
+}
+
+.btn-danger:hover { filter: brightness(1.08); }
+.btn-danger:active { transform: translateY(1px); }
+
+.danger-zone { border-color: #ef444455; }
+.danger-zone h2 { color: #fca5a5; }
+
+.flashes { margin-bottom: 14px; }
+.flashes .alert { margin-bottom: 8px; }
+.alert-ok {
+    background: #22c55e1f;
+    border: 1px solid #22c55e55;
+    color: #bbf7d0;
+}
+
+code {
+    background: #ffffff14;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: .92em;
+}
+
+/* ---------------- Giao diện sáng ---------------- */
+
+html[data-theme="light"] {
+    --bg: #eef2f8;
+    --bg-soft: #ffffff;
+    --panel: #ffffff;
+    --panel-2: #f1f5f9;
+    --border: #d8e0eb;
+    --text: #0f172a;
+    --muted: #5b6b82;
+}
+
+html[data-theme="light"] body {
+    background: radial-gradient(1000px 600px at 10% -10%, #bfdbfe88, transparent),
+                radial-gradient(900px 600px at 100% 0%, #a5f3fc55, transparent),
+                var(--bg);
+    color: var(--text);
+}
+
+html[data-theme="light"] .sidebar { background: #ffffff; }
+html[data-theme="light"] .sidebar-foot { background: #f8fafc; }
+html[data-theme="light"] .chat { background: #f6f9ff; }
+html[data-theme="light"] .chat-head,
+html[data-theme="light"] .composer { background: #ffffffe0; }
+html[data-theme="light"] .conv { color: #334155; }
+html[data-theme="light"] .conv.active { background: #3b82f618; color: #0f172a; }
+html[data-theme="light"] .user-row:hover { background: #0f172a0a; }
+html[data-theme="light"] .user-row.active { background: #0f172a10; }
+html[data-theme="light"] .online-dot { border-color: #fff; }
+html[data-theme="light"] .bubble {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #0f172a;
+    box-shadow: 0 2px 8px #0f172a14;
+}
+html[data-theme="light"] .msg.mine .bubble { color: #fff; }
+html[data-theme="light"] .composer textarea,
+html[data-theme="light"] .field input,
+html[data-theme="light"] .auth-card input {
+    background: #ffffff;
+    color: #0f172a;
+}
+html[data-theme="light"] .card {
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
+}
+html[data-theme="light"] .field label { color: #334155; }
+html[data-theme="light"] .segmented label { background: #ffffff; }
+html[data-theme="light"] .segmented label.checked { background: #3b82f614; }
+html[data-theme="light"] .auth-card {
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
+}
+html[data-theme="light"] .alert { color: #991b1b; }
+html[data-theme="light"] .alert-ok { color: #166534; }
+
+@media (max-width: 700px) {
+    .form-grid { grid-template-columns: 1fr; gap: 0; }
+    .settings-wrap { padding: 20px 14px 60px; }
+    .card { padding: 20px 18px; }
+}
+

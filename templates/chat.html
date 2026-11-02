@@ -24,6 +24,7 @@
                 <strong id="me-name"></strong>
                 <span id="me-handle"></span>
             </div>
+            <a href="{{ url_for('settings_page') }}" class="icon-btn" title="Cài đặt" aria-label="Cài đặt">⚙</a>
             <form method="post" action="{{ url_for('logout') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf }}">
                 <button type="submit" class="icon-btn" title="Đăng xuất" aria-label="Đăng xuất">⏻</button>
@@ -59,6 +60,7 @@
             "display_name": me["display_name"],
         },
         "csrf": csrf,
+        "settings": ui_prefs,
     } | tojson }};
 </script>
 {% endblock %}

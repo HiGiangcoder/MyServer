@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import secrets
@@ -6,6 +7,7 @@ from datetime import datetime, timezone
 
 from flask import (
     Flask,
+    flash,
     g,
     jsonify,
     redirect,
@@ -53,6 +55,19 @@ USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,20}$")
 MAX_MESSAGE_LEN = 2000
 ONLINE_SECONDS = 60
 
+DEFAULT_PREFS = {
+    "theme": "dark",
+    "font_size": "md",
+    "enter_to_send": True,
+    "sound": False,
+    "show_avatars": True,
+}
+
+PREF_CHOICES = {
+    "theme": {"dark", "light"},
+    "font_size": {"sm", "md", "lg"},
+}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,7 +75,8 @@ CREATE TABLE IF NOT EXISTS users (
     display_name  TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL,
-    last_seen     TEXT NOT NULL
+    last_seen     TEXT NOT NULL,
+    settings      TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -80,6 +96,12 @@ def init_db():
     with sqlite3.connect(DB_PATH, timeout=15) as db:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
+
+        columns = {row[1] for row in db.execute("PRAGMA table_info(users)")}
+        if "settings" not in columns:
+            db.execute(
+                "ALTER TABLE users ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'"
+            )
 
 
 init_db()
@@ -121,10 +143,44 @@ def current_user():
     if not user_id:
         return None
     return query(
-        "SELECT id, username, display_name, created_at FROM users WHERE id = ?",
+        "SELECT id, username, display_name, created_at, settings "
+        "FROM users WHERE id = ?",
         (user_id,),
         one=True,
     )
+
+
+def normalize_prefs(raw):
+    """Trả về dict prefs hợp lệ, thiếu/sai thì dùng mặc định."""
+    prefs = dict(DEFAULT_PREFS)
+    if not isinstance(raw, dict):
+        return prefs
+
+    for key, allowed in PREF_CHOICES.items():
+        value = raw.get(key)
+        if isinstance(value, str) and value in allowed:
+            prefs[key] = value
+
+    for key in ("enter_to_send", "sound", "show_avatars"):
+        if key in raw and isinstance(raw[key], bool):
+            prefs[key] = raw[key]
+
+    return prefs
+
+
+def get_prefs(user):
+    try:
+        raw = json.loads(user["settings"] or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    return normalize_prefs(raw)
+
+
+@app.context_processor
+def inject_prefs():
+    user = current_user()
+    prefs = get_prefs(user) if user else dict(DEFAULT_PREFS)
+    return {"ui_prefs": prefs}
 
 
 def wants_json():
@@ -332,6 +388,141 @@ def logout():
         return jsonify({"error": "CSRF token không hợp lệ"}), 403
     session.clear()
     return redirect(url_for("login"))
+
+
+# --------------------------------------------------------------------------
+# Cài đặt tài khoản / giao diện
+# --------------------------------------------------------------------------
+
+
+@app.get("/settings")
+@login_required
+def settings_page():
+    me = current_user()
+    return render_template(
+        "settings.html", me=me, prefs=get_prefs(me), csrf=ensure_csrf()
+    )
+
+
+@app.post("/settings/profile")
+@login_required
+def settings_profile():
+    if not valid_csrf():
+        flash("Phiên làm việc đã hết hạn, vui lòng thử lại.", "error")
+        return redirect(url_for("settings_page"))
+
+    me = current_user()
+    username = (request.form.get("username") or "").strip()
+    display_name = (request.form.get("display_name") or "").strip()
+
+    if not USERNAME_RE.match(username):
+        flash("Tên đăng nhập 3–20 ký tự, chỉ gồm chữ, số và dấu gạch dưới.", "error")
+    elif not (1 <= len(display_name) <= 40):
+        flash("Tên hiển thị phải từ 1 đến 40 ký tự.", "error")
+    elif query(
+        "SELECT 1 FROM users WHERE username = ? COLLATE NOCASE AND id <> ?",
+        (username, me["id"]),
+        one=True,
+    ):
+        flash("Tên đăng nhập này đã có người dùng.", "error")
+    else:
+        execute(
+            "UPDATE users SET username = ?, display_name = ? WHERE id = ?",
+            (username, display_name, me["id"]),
+        )
+        flash("Đã cập nhật hồ sơ.", "ok")
+
+    return redirect(url_for("settings_page"))
+
+
+@app.post("/settings/password")
+@login_required
+def settings_password():
+    if not valid_csrf():
+        flash("Phiên làm việc đã hết hạn, vui lòng thử lại.", "error")
+        return redirect(url_for("settings_page"))
+
+    me = current_user()
+    row = query(
+        "SELECT password_hash FROM users WHERE id = ?", (me["id"],), one=True
+    )
+    current_password = request.form.get("current_password") or ""
+    new_password = request.form.get("new_password") or ""
+    confirm_password = request.form.get("confirm_password") or ""
+
+    if not check_password_hash(row["password_hash"], current_password):
+        flash("Mật khẩu hiện tại không đúng.", "error")
+    elif len(new_password) < 6:
+        flash("Mật khẩu mới phải có ít nhất 6 ký tự.", "error")
+    elif new_password != confirm_password:
+        flash("Hai lần nhập mật khẩu mới không khớp.", "error")
+    elif new_password == current_password:
+        flash("Mật khẩu mới phải khác mật khẩu hiện tại.", "error")
+    else:
+        execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash(new_password), me["id"]),
+        )
+        # Giữ đăng nhập nhưng xoay CSRF token
+        session.clear()
+        session["user_id"] = me["id"]
+        session["csrf"] = secrets.token_urlsafe(32)
+        flash("Đã đổi mật khẩu.", "ok")
+
+    return redirect(url_for("settings_page"))
+
+
+@app.post("/settings/delete")
+@login_required
+def settings_delete():
+    if not valid_csrf():
+        flash("Phiên làm việc đã hết hạn, vui lòng thử lại.", "error")
+        return redirect(url_for("settings_page"))
+
+    me = current_user()
+    row = query(
+        "SELECT password_hash FROM users WHERE id = ?", (me["id"],), one=True
+    )
+    password = request.form.get("password") or ""
+    confirm_text = (request.form.get("confirm_text") or "").strip().upper()
+
+    if not check_password_hash(row["password_hash"], password):
+        flash("Mật khẩu không đúng, tài khoản chưa bị xóa.", "error")
+        return redirect(url_for("settings_page"))
+
+    if confirm_text != "XOA":
+        flash('Gõ chính xác "XOA" để xác nhận xóa tài khoản.', "error")
+        return redirect(url_for("settings_page"))
+
+    # FOREIGN KEY ON DELETE CASCADE xóa luôn tin nhắn của người này
+    execute("DELETE FROM users WHERE id = ?", (me["id"],))
+    session.clear()
+    return redirect(url_for("register", deleted=1))
+
+
+@app.post("/settings/prefs")
+@login_required
+def settings_prefs():
+    if not valid_csrf():
+        flash("Phiên làm việc đã hết hạn, vui lòng thử lại.", "error")
+        return redirect(url_for("settings_page"))
+
+    me = current_user()
+    prefs = normalize_prefs(
+        {
+            "theme": request.form.get("theme", DEFAULT_PREFS["theme"]),
+            "font_size": request.form.get("font_size", DEFAULT_PREFS["font_size"]),
+            "enter_to_send": "enter_to_send" in request.form,
+            "sound": "sound" in request.form,
+            "show_avatars": "show_avatars" in request.form,
+        }
+    )
+    execute(
+        "UPDATE users SET settings = ? WHERE id = ?",
+        (json.dumps(prefs), me["id"]),
+    )
+    flash("Đã lưu cài đặt chat.", "ok")
+    return redirect(url_for("settings_page") + "#chat")
 
 
 # --------------------------------------------------------------------------

@@ -8,6 +8,10 @@
     <h1>Tạo tài khoản</h1>
     <p class="muted">Tham gia phòng chat của MyServer.</p>
 
+    {% if request.args.get('deleted') %}
+        <div class="alert alert-ok">Tài khoản và tin nhắn của bạn đã được xóa.</div>
+    {% endif %}
+
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
 
     <form method="post" action="{{ url_for('register') }}">

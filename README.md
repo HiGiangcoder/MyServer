@@ -10,6 +10,10 @@
 - Đăng ký / đăng nhập bằng tài khoản nội bộ (mật khẩu hash PBKDF2).
 - **Phòng chung**: mọi người trong server nhắn với nhau.
 - **Nhắn tin riêng 1-1**: bấm vào tên thành viên ở sidebar.
+- **Cài đặt tài khoản**: đổi tên hiển thị, đổi username, đổi mật khẩu,
+  xóa tài khoản (xóa kèm toàn bộ tin nhắn, có xác nhận mật khẩu + chữ `XOA`).
+- **Cài đặt chat**: giao diện tối/sáng, cỡ chữ, Enter hoặc Ctrl+Enter để gửi,
+  âm thanh thông báo, ẩn/hiện avatar. Lưu theo tài khoản trong DB.
 - Danh sách thành viên + chấm xanh online (heartbeat 25s).
 - Tin nhắn tự cập nhật mỗi 2 giây (polling, không cần WebSocket).
 - Giao diện responsive, Enter để gửi, Shift+Enter xuống dòng.

@@ -88,7 +88,8 @@ static/app.js
 ```
 
 Ứng dụng tự tạo `data/app.db` và `data/secret_key` ở lần chạy đầu tiên,
-không cần migration thủ công.
+không cần migration thủ công. Nếu DB cũ chưa có cột `settings`, app tự
+`ALTER TABLE` khi khởi động.
 
 Các route chính:
 
@@ -104,6 +105,11 @@ Các route chính:
 | `POST /api/dm/<username>` | Gửi tin riêng |
 | `GET /api/users` | Danh sách thành viên + trạng thái online |
 | `POST /api/heartbeat` | Cập nhật "đang online" |
+| `GET /settings` | Trang cài đặt tài khoản + chat |
+| `POST /settings/profile` | Đổi tên hiển thị / username |
+| `POST /settings/password` | Đổi mật khẩu |
+| `POST /settings/prefs` | Lưu giao diện/cài đặt chat |
+| `POST /settings/delete` | Xóa tài khoản + toàn bộ tin nhắn |
 | `GET /api/hello`, `/api/info` | API kiểm tra cũ |
 
 > Mọi API `POST` bắt buộc header `X-CSRF-Token` (giá trị lấy từ
@@ -118,7 +124,8 @@ Các route chính:
 │   ├── base.html
 │   ├── login.html
 │   ├── register.html
-│   └── chat.html
+│   ├── chat.html
+│   └── settings.html
 ├── static/
 │   ├── style.css
 │   └── app.js
@@ -633,7 +640,8 @@ Sau khi reboot, kiểm tra lại mục 1–4 mà không đăng nhập thủ côn
 │   ├── base.html
 │   ├── login.html
 │   ├── register.html
-│   └── chat.html
+│   ├── chat.html
+│   └── settings.html
 ├── static/
 │   ├── style.css
 │   └── app.js

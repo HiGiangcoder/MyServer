@@ -2,6 +2,8 @@
     "use strict";
 
     const { me, csrf } = window.APP;
+    const settings = window.APP.settings || {};
+    const enterToSend = settings.enter_to_send !== false;
     const els = {
         messages: document.getElementById("messages"),
         input: document.getElementById("input"),
@@ -97,6 +99,34 @@
 
     function scrollToBottom() {
         els.messages.scrollTop = els.messages.scrollHeight;
+    }
+
+    let audioCtx = null;
+
+    function beep() {
+        if (!settings.sound) return;
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            audioCtx = audioCtx || new Ctx();
+            if (audioCtx.state === "suspended") audioCtx.resume();
+
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            const now = audioCtx.currentTime;
+
+            osc.type = "sine";
+            osc.frequency.value = 880;
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(0.1, now + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+
+            osc.connect(gain).connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.2);
+        } catch (_) {
+            /* trình duyệt chặn autoplay: bỏ qua */
+        }
     }
 
     // ---------------- Render ----------------
@@ -218,12 +248,17 @@
             setHeader("dm", data.peer.display_name, data.peer.username);
         }
 
+        let incoming = false;
+
         for (const msg of data.messages) {
             if (state.seen.has(msg.id)) continue;
             state.seen.add(msg.id);
             state.lastId = Math.max(state.lastId, msg.id);
+            if (!msg.mine) incoming = true;
             appendMessage(msg, { forceScroll: initial });
         }
+
+        if (!initial && incoming) beep();
 
         if (initial) showEmptyIfNeeded();
         setStatus(true);
@@ -364,7 +399,13 @@
         els.input.addEventListener("input", autosize);
 
         els.input.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (event.key !== "Enter") return;
+
+            // Tắt "Enter để gửi" => Enter xuống dòng, Ctrl/Cmd+Enter mới gửi
+            if (event.shiftKey && enterToSend) return;
+
+            const withModifier = event.ctrlKey || event.metaKey;
+            if (enterToSend || withModifier) {
                 event.preventDefault();
                 els.composer.requestSubmit();
             }
@@ -406,6 +447,11 @@
         initMe();
         bind();
         autosize();
+
+        els.input.placeholder = enterToSend
+            ? "Nhập tin nhắn… (Enter để gửi, Shift+Enter xuống dòng)"
+            : "Nhập tin nhắn… (Ctrl+Enter để gửi, Enter xuống dòng)";
+
         setHeader("room");
         markActiveUser();
 

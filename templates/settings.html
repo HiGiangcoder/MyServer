@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Cài đặt — MyServer{% endblock %}
+{% block body_class %}settings-page{% endblock %}
+
+{% block body %}
+<div class="settings-wrap">
+    <header class="settings-head">
+        <a href="{{ url_for('index') }}" class="icon-btn" title="Về phòng chat" aria-label="Về phòng chat">←</a>
+        <div>
+            <h1>Cài đặt</h1>
+            <span class="muted">@{{ me["username"] }}</span>
+        </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="flashes">
+                {% for category, message in messages %}
+                    <div class="alert {{ 'alert-ok' if category == 'ok' else '' }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <section class="card">
+        <h2>Hồ sơ</h2>
+        <p class="muted">Đổi tên hiển thị và tên đăng nhập.</p>
+
+        <form method="post" action="{{ url_for('settings_profile') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+
+            <div class="form-grid">
+                <div class="field">
+                    <label for="display_name">Tên hiển thị</label>
+                    <input id="display_name" name="display_name" value="{{ me['display_name'] }}"
+                           maxlength="40" required>
+                </div>
+
+                <div class="field">
+                    <label for="username">Tên đăng nhập</label>
+                    <input id="username" name="username" value="{{ me['username'] }}"
+                           autocapitalize="none" required>
+                    <small class="hint">3–20 ký tự: chữ, số, dấu gạch dưới.</small>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-primary">Lưu hồ sơ</button>
+        </form>
+    </section>
+
+    <section class="card">
+        <h2>Đổi mật khẩu</h2>
+        <p class="muted">Bạn vẫn đăng nhập sau khi đổi mật khẩu.</p>
+
+        <form method="post" action="{{ url_for('settings_password') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+
+            <div class="form-grid">
+                <div class="field">
+                    <label for="current_password">Mật khẩu hiện tại</label>
+                    <input id="current_password" name="current_password" type="password"
+                           autocomplete="current-password" required>
+                </div>
+
+                <div class="field">
+                    <label for="new_password">Mật khẩu mới</label>
+                    <input id="new_password" name="new_password" type="password" minlength="6"
+                           autocomplete="new-password" required>
+                </div>
+
+                <div class="field">
+                    <label for="confirm_password">Nhập lại mật khẩu mới</label>
+                    <input id="confirm_password" name="confirm_password" type="password" minlength="6"
+                           autocomplete="new-password" required>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-primary">Đổi mật khẩu</button>
+        </form>
+    </section>
+
+    <section class="card" id="chat">
+        <h2>Cài đặt chat</h2>
+        <p class="muted">Lưu theo tài khoản, áp dụng trên mọi thiết bị.</p>
+
+        <form method="post" action="{{ url_for('settings_prefs') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+
+            <div class="field">
+                <label>Giao diện</label>
+                <div class="segmented">
+                    <label class="{{ 'checked' if prefs.theme == 'dark' else '' }}">
+                        <input type="radio" name="theme" value="dark"
+                               {% if prefs.theme == 'dark' %}checked{% endif %}>
+                        🌙 Tối
+                    </label>
+                    <label class="{{ 'checked' if prefs.theme == 'light' else '' }}">
+                        <input type="radio" name="theme" value="light"
+                               {% if prefs.theme == 'light' %}checked{% endif %}>
+                        ☀️ Sáng
+                    </label>
+                </div>
+            </div>
+
+            <div class="field">
+                <label>Cỡ chữ tin nhắn</label>
+                <div class="segmented">
+                    <label class="{{ 'checked' if prefs.font_size == 'sm' else '' }}">
+                        <input type="radio" name="font_size" value="sm"
+                               {% if prefs.font_size == 'sm' %}checked{% endif %}>
+                        Nhỏ
+                    </label>
+                    <label class="{{ 'checked' if prefs.font_size == 'md' else '' }}">
+                        <input type="radio" name="font_size" value="md"
+                               {% if prefs.font_size == 'md' %}checked{% endif %}>
+                        Vừa
+                    </label>
+                    <label class="{{ 'checked' if prefs.font_size == 'lg' else '' }}">
+                        <input type="radio" name="font_size" value="lg"
+                               {% if prefs.font_size == 'lg' %}checked{% endif %}>
+                        Lớn
+                    </label>
+                </div>
+            </div>
+
+            <div class="toggles">
+                <label class="toggle-row">
+                    <span>
+                        <strong>Enter để gửi</strong>
+                        <small>Tắt: Enter xuống dòng, Ctrl+Enter để gửi</small>
+                    </span>
+                    <input type="checkbox" name="enter_to_send" class="switch"
+                           {% if prefs.enter_to_send %}checked{% endif %}>
+                </label>
+
+                <label class="toggle-row">
+                    <span>
+                        <strong>Âm thanh thông báo</strong>
+                        <small>Phát tiếng "bíp" khi có tin nhắn mới</small>
+                    </span>
+                    <input type="checkbox" name="sound" class="switch"
+                           {% if prefs.sound %}checked{% endif %}>
+                </label>
+
+                <label class="toggle-row">
+                    <span>
+                        <strong>Hiện avatar</strong>
+                        <small>Tắt để giao diện gọn hơn</small>
+                    </span>
+                    <input type="checkbox" name="show_avatars" class="switch"
+                           {% if prefs.show_avatars %}checked{% endif %}>
+                </label>
+            </div>
+
+            <button type="submit" class="btn-primary">Lưu cài đặt chat</button>
+        </form>
+    </section>
+
+    <section class="card danger-zone">
+        <h2>Xóa tài khoản</h2>
+        <p class="muted">
+            Xóa vĩnh viễn tài khoản và <strong>toàn bộ tin nhắn</strong> của bạn.
+            Không thể hoàn tác.
+        </p>
+
+        <form method="post" action="{{ url_for('settings_delete') }}"
+              onsubmit="return confirm('Xóa tài khoản và toàn bộ tin nhắn? Hành động này không thể hoàn tác.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+
+            <div class="form-grid">
+                <div class="field">
+                    <label for="delete_password">Mật khẩu để xác nhận</label>
+                    <input id="delete_password" name="password" type="password"
+                           autocomplete="current-password" required>
+                </div>
+
+                <div class="field">
+                    <label for="confirm_text">Gõ <code>XOA</code> để xác nhận</label>
+                    <input id="confirm_text" name="confirm_text" placeholder="XOA"
+                           autocapitalize="characters" required>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-danger">Xóa tài khoản vĩnh viễn</button>
+        </form>
+    </section>
+</div>
+{% endblock %}
