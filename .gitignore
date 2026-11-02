@@ -1,0 +1,13 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+
+# Bí mật / cấu hình cục bộ
+.env
+*.token
+*.log
+
+# Hệ điều hành / editor
+.DS_Store
+*.swp

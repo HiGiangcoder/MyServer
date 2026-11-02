@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>My Personal Server</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #111827;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .card {
+            background: #1f2937;
+            padding: 40px;
+            border-radius: 15px;
+            width: 500px;
+            text-align: center;
+        }
+
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        #result {
+            margin-top: 20px;
+            background: #111827;
+            padding: 15px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="card">
+
+    <h1>My Personal Server</h1>
+
+    <p>
+        Frontend này đang được gửi từ máy tính cá nhân của tôi.
+    </p>
+
+    <button onclick="callBackend()">
+        Call Backend API
+    </button>
+
+    <div id="result">
+        Waiting...
+    </div>
+
+</div>
+
+<script>
+
+async function callBackend() {
+
+    const response = await fetch("/api/hello");
+
+    const data = await response.json();
+
+    document.getElementById("result").innerText =
+        JSON.stringify(data, null, 2);
+}
+
+</script>
+
+</body>
+</html>
