@@ -186,8 +186,8 @@ Environment=PATH=/home/brolyn-ntg/myserver/venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/brolyn-ntg/myserver/venv/bin/gunicorn \
     --workers 3 \
     --bind 127.0.0.1:8000 \
-    --timeout 300 \
-    --graceful-timeout 30 \
+    --timeout 14400 \
+    --graceful-timeout 60 \
     --access-logfile - \
     --error-logfile - \
     app:app
@@ -246,8 +246,8 @@ server {
     server_name gianglab.duckdns.org;
 
     # Cho phép gửi tệp lớn (mặc định nginx chỉ 1 MB)
-    client_max_body_size 2048m;
-    client_body_timeout 300s;
+    client_max_body_size 21g;
+    client_body_timeout 600s;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -259,8 +259,8 @@ server {
 
         # Không đệm request body để upload lớn chuyển tiếp ngay
         proxy_request_buffering off;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
+        proxy_read_timeout 7200s;
+        proxy_send_timeout 7200s;
     }
 }
 ```
@@ -270,6 +270,15 @@ Nếu site đã tồn tại, chỉ cần chạy script có sẵn (tự chèn cá
 ```bash
 sudo ~/myserver/setup-nginx-upload.sh
 ```
+
+Giới hạn mặc định của app: **2 GB/tệp**, admin có thể nâng tối đa **20 GB/tệp**.
+Request tối đa 21 GB (đủ cho 1 tệp 20 GB + overhead multipart). Trong lúc nhận
+file, multipart tạm cũng được ghi vào cùng thư mục upload, nên cần khoảng
+**2 lần dung lượng tệp** đang upload. Hãy trỏ thư mục lưu tệp sang ổ lớn nếu
+định gửi file cực lớn.
+
+> ngrok Free giới hạn 1 GB data transfer/tháng, nên không phù hợp để gửi
+> file hàng chục GB. Dùng port forwarding trực tiếp hoặc dịch vụ khác.
 
 ### 5.2. Kích hoạt
 
@@ -646,7 +655,7 @@ Sau khi reboot, kiểm tra lại mục 1–4 mà không đăng nhập thủ côn
 | DuckDNS không cập nhật | Chạy tay `~/duckdns/duck.sh`; xem `~/duckdns/duck.log`; kiểm tra `crontab -l` và `systemctl is-active cron` |
 | `ln: File exists` | Link sites-enabled đã tồn tại, bỏ qua |
 | Upload báo `413 Request Entity Too Large` | Nginx chưa nâng giới hạn: chạy `sudo ~/myserver/setup-nginx-upload.sh` rồi thử lại |
-| Upload lớn bị `502` / timeout | Kiểm tra gunicorn có `--timeout 300` và nginx có `proxy_read_timeout 300s`, `proxy_request_buffering off` |
+| Upload lớn bị `502` / timeout | Kiểm tra gunicorn có `--timeout 14400` và nginx có `proxy_read_timeout 7200s`, `proxy_request_buffering off` |
 | Tệp biến mất sau vài ngày | Đúng cơ chế tệp tạm: xem hạn trong tin nhắn hoặc `/admin/files`; admin đổi thời gian lưu ở `/settings#admin` |
 | Không thấy mục Quản trị server | Tài khoản không phải admin. Kiểm tra `sqlite3 data/app.db "SELECT username,is_admin FROM users;"` |
 | Admin không xóa được tệp / tin nhắn | Hết phiên CSRF: tải lại trang rồi thao tác lại |

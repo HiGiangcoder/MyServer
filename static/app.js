@@ -5,7 +5,8 @@
     const settings = window.APP.settings || {};
     const appConfig = window.APP.config || {};
     const maxFileMb = Number(appConfig.max_file_mb) || 100;
-    const maxTotalBytes = 2 * 1024 * 1024 * 1024; // khớp MAX_CONTENT_LENGTH
+    const maxTotalBytes =
+        Number(appConfig.max_total_bytes) || 21 * 1024 * 1024 * 1024;
     const enterToSend = settings.enter_to_send !== false;
     const els = {
         messages: document.getElementById("messages"),
@@ -585,7 +586,7 @@
                 `Bỏ qua ${tooBig.length} tệp vượt ${maxFileMb} MB`;
         } else if (overTotal) {
             els.uploadHint.textContent =
-                "Tổng dung lượng vượt 2 GB, đã bỏ qua phần còn lại";
+                `Tổng dung lượng vượt ${formatSize(maxTotalBytes)}, đã bỏ qua phần còn lại`;
         }
     }
 

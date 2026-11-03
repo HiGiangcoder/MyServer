@@ -42,13 +42,14 @@ cho người khác tự đăng ký.
 - **Cấu hình của admin** (`/settings` → mục Quản trị server):
   - Thư mục lưu tệp tạm trên server (đường dẫn tuyệt đối, phải ghi được).
   - Thời gian lưu tệp (giờ) — mặc định 72 giờ.
-  - Kích thước tối đa mỗi tệp (MB) — mặc định 100 MB, tối đa 1024 MB.
+  - Kích thước tối đa mỗi tệp (MB) — mặc định 2048 MB (2 GB), tối đa 20480 MB (20 GB).
   - Tự động xóa tệp hết hạn (bật/tắt).
   - Số ngày lưu tin nhắn (0 = giữ mãi), kèm nút xóa tin nhắn cũ / xóa toàn bộ.
 - **Quản lý tệp tạm** (`/admin/files`): sắp xếp theo nặng nhất / mới nhất /
   sắp hết hạn / tên; chọn nhiều tệp để xóa thủ công; xem tổng dung lượng;
   nút dọn ngay các tệp hết hạn.
-- Giới hạn cứng: tối đa 50 tệp mỗi tin nhắn, 2 GB mỗi request.
+- Giới hạn cứng: tối đa 50 tệp mỗi tin nhắn, 21 GB mỗi request (đủ cho
+  1 tệp 20 GB + overhead multipart).
 - Tệp trong tin nhắn riêng chỉ người gửi, người nhận và admin tải được.
   Tệp trong phòng chung thì mọi thành viên đã đăng nhập đều tải được.
 - Dữ liệu nằm ở `data/app.db` (metadata) và `data/uploads/` (nội dung tệp),
@@ -62,9 +63,18 @@ Nginx mặc định chặn body > 1 MB. Đã có script cấu hình lại (chạ
 sudo ~/myserver/setup-nginx-upload.sh
 ```
 
-Script đặt `client_max_body_size 2048m`, tăng timeout và tắt request
-buffering, sau đó `nginx -t` + reload. Gunicorn cũng đã được đặt
-`--timeout 300` trong `myserver.service` để upload lâu không bị cắt.
+Script đặt `client_max_body_size 21g`, tăng timeout lên 2 giờ và tắt
+request buffering, sau đó `nginx -t` + reload. Gunicorn cũng đã được đặt
+`--timeout 14400` (4 giờ) trong `myserver.service` để upload lâu không bị cắt.
+
+> Upload 20 GB cần **khoảng gấp đôi dung lượng** trong lúc đang nhận file
+> (file tạm multipart + file chính), trừ khi ổ đĩa hỗ trợ tối ưu đặc biệt.
+> App tự đặt thư mục tạm multipart cùng ổ với thư mục lưu tệp, nên hãy trỏ
+> `upload_dir` sang ổ lớn trước khi gửi file cực lớn.
+>
+> ngrok Free chỉ có 1 GB data transfer/tháng, nên thực tế không thể gửi
+> 20 GB qua ngrok. Muốn dùng file cực lớn cần bỏ ngrok (port forwarding)
+> hoặc dùng dịch vụ/ổ lưu trữ khác.
 
 ## Kiến trúc
 
@@ -91,7 +101,7 @@ Lấy URL công khai hiện tại:
 | Giao diện | `static/style.css`, `static/app.js` |
 | Database + secret | `data/app.db`, `data/secret_key` (đã gitignore) |
 | Tệp tạm upload | `data/uploads/` (đổi được trong trang admin) |
-| Gunicorn (3 worker) | systemd user unit `myserver.service` (`--timeout 300`) |
+| Gunicorn (3 worker) | systemd user unit `myserver.service` (`--timeout 14400`) |
 | Nginx reverse proxy | `/etc/nginx/sites-available/myserver` |
 | Script bật upload lớn | `setup-nginx-upload.sh` |
 | Cập nhật DuckDNS | `~/duckdns/duck.sh` + cron `*/5 * * * *` |

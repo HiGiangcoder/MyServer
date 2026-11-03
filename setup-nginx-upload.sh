@@ -19,11 +19,11 @@ path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
 
 lines = [
-    "client_max_body_size 2048m;",
-    "client_body_timeout 300s;",
+    "client_max_body_size 21g;",
+    "client_body_timeout 600s;",
     "proxy_request_buffering off;",
-    "proxy_read_timeout 300s;",
-    "proxy_send_timeout 300s;",
+    "proxy_read_timeout 7200s;",
+    "proxy_send_timeout 7200s;",
 ]
 
 # Xóa các dòng cũ (nếu đã cấu hình trước đó)
@@ -48,4 +48,4 @@ PY
 nginx -t
 systemctl reload nginx
 
-echo "XONG. Giới hạn upload: 2048 MB (khớp MAX_CONTENT_LENGTH của Flask)."
+echo "XONG. Giới hạn upload: 21 GB (khớp MAX_CONTENT_LENGTH của Flask)."

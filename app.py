@@ -3,6 +3,7 @@ import os
 import re
 import secrets
 import sqlite3
+import tempfile
 import threading
 import time
 import uuid
@@ -48,12 +49,15 @@ def load_secret_key():
     return key
 
 
+MAX_FILE_MB = 20 * 1024  # admin được đặt tối đa 20 GB/tệp
+MAX_TOTAL_UPLOAD_BYTES = 21 * 1024 * 1024 * 1024  # 20 GB + overhead multipart
+
 app = Flask(__name__)
 app.config.update(
     SECRET_KEY=load_secret_key(),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    MAX_CONTENT_LENGTH=2 * 1024 * 1024 * 1024,
+    MAX_CONTENT_LENGTH=MAX_TOTAL_UPLOAD_BYTES,
 )
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,20}$")
@@ -76,7 +80,7 @@ PREF_CHOICES = {
 DEFAULT_CONFIG = {
     "upload_dir": os.path.join(DATA_DIR, "uploads"),
     "retention_hours": 72,
-    "max_file_mb": 100,
+    "max_file_mb": 2 * 1024,  # mặc định 2 GB
     "message_retention_days": 0,
     "auto_delete": True,
 }
@@ -294,7 +298,7 @@ def get_config():
 
     try:
         cfg["max_file_mb"] = max(
-            1, min(1024, int(raw.get("max_file_mb", cfg["max_file_mb"])))
+            1, min(MAX_FILE_MB, int(raw.get("max_file_mb", cfg["max_file_mb"])))
         )
     except (TypeError, ValueError):
         pass
@@ -333,7 +337,7 @@ def normalize_config(data):
             return fallback
 
     cfg["retention_hours"] = as_int("retention_hours", 1, 24 * 365, 72)
-    cfg["max_file_mb"] = as_int("max_file_mb", 1, 1024, 100)
+    cfg["max_file_mb"] = as_int("max_file_mb", 1, MAX_FILE_MB, 2 * 1024)
     cfg["message_retention_days"] = as_int(
         "message_retention_days", 0, 3650, 0
     )
@@ -355,6 +359,28 @@ def ensure_upload_dir(cfg):
     if not os.access(path, os.W_OK):
         raise OSError(f"Thư mục không ghi được: {path}")
     return path
+
+
+def apply_temp_dir(cfg):
+    """Đặt thư mục tạm của multipart cùng ổ với upload dir.
+
+    Nhờ vậy file lớn không bị ghi vào /tmp (thường chỉ vài chục GB) mà dùng
+    đúng ổ đĩa admin đã chọn.
+    """
+    try:
+        path = ensure_upload_dir(cfg)
+    except OSError:
+        return False
+    tempfile.tempdir = path
+    return True
+
+
+@app.before_request
+def prepare_upload_tempdir():
+    # request.form/files được parse rất sớm (CSRF, target...), nên phải đổi
+    # temp dir trước khi Flask đọc multipart. Mỗi worker tự đọc config từ DB.
+    if request.method == "POST" and request.path == "/api/upload":
+        apply_temp_dir(get_config())
 
 
 # --------------------------------------------------------------------------
@@ -613,6 +639,7 @@ def index():
         upload_cfg={
             "max_file_mb": cfg["max_file_mb"],
             "retention_hours": cfg["retention_hours"],
+            "max_total_bytes": MAX_TOTAL_UPLOAD_BYTES,
         },
     )
 
@@ -1224,6 +1251,7 @@ def settings_admin():
         return redirect(url_for("settings_page") + "#admin")
 
     save_config(cfg)
+    apply_temp_dir(cfg)
     flash("Đã lưu cấu hình server.", "ok")
     return redirect(url_for("settings_page") + "#admin")
 
@@ -1361,6 +1389,9 @@ def info():
 def too_large(_err):
     return jsonify({"error": "Dữ liệu gửi lên quá lớn"}), 413
 
+
+with app.app_context():
+    apply_temp_dir(get_config())
 
 start_cleanup_thread()
 

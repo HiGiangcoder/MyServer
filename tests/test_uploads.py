@@ -78,6 +78,25 @@ try:
 
     with mod.app.app_context():
         rows = mod.query("SELECT username, is_admin FROM users ORDER BY id")
+        check(mod.DEFAULT_CONFIG["max_file_mb"] == 2048, "default max file is 2 GB")
+        check(mod.MAX_FILE_MB == 20480, "hard max file is 20 GB")
+        check(
+            mod.MAX_TOTAL_UPLOAD_BYTES == 21 * 1024 * 1024 * 1024,
+            "request cap is 21 GB",
+        )
+        check(
+            mod.app.config["MAX_CONTENT_LENGTH"] == mod.MAX_TOTAL_UPLOAD_BYTES,
+            "Flask MAX_CONTENT_LENGTH matches cap",
+        )
+        check(mod.get_config()["max_file_mb"] == 2048, "fresh config uses 2 GB default")
+        check(
+            mod.normalize_config({"max_file_mb": "999999"})["max_file_mb"] == 20480,
+            "config clamps to 20 GB max",
+        )
+        check(
+            mod.tempfile.tempdir == mod.get_config()["upload_dir"],
+            "multipart temp dir follows upload dir",
+        )
         admin_row = [r for r in rows if r["username"] == "admin"][0]
         bob_row = [r for r in rows if r["username"] == "bob"][0]
         check(admin_row["is_admin"] == 1, "first registered user is admin")
@@ -166,9 +185,12 @@ try:
         check(cfg["auto_delete"] is True, "auto_delete saved", cfg)
         check(cfg["upload_dir"] == newdir, "upload_dir saved", cfg)
         check(os.path.isdir(newdir), "upload dir created")
+        check(mod.tempfile.tempdir == newdir, "temp dir follows new upload dir")
 
+    mod.tempfile.tempdir = "/tmp"
     r = upload(admin, "after-config.txt", b"x" * 100)
     check(r.status_code == 201, "upload uses new config dir", r.status_code)
+    check(mod.tempfile.tempdir == newdir, "upload request resets temp dir per worker")
     with mod.app.app_context():
         p = mod.query("SELECT stored_path FROM attachments ORDER BY id DESC LIMIT 1", one=True)["stored_path"]
         check(os.path.dirname(p) == newdir, "new file stored in configured dir", p)

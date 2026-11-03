@@ -181,7 +181,8 @@
                 <div class="field">
                     <label for="max_file_mb">Kích thước tối đa mỗi tệp (MB)</label>
                     <input id="max_file_mb" name="max_file_mb" type="number"
-                           min="1" max="1024" value="{{ cfg.max_file_mb }}">
+                           min="1" max="20480" value="{{ cfg.max_file_mb }}">
+                    <small class="hint">Mặc định 2048 MB (2 GB), tối đa 20480 MB (20 GB).</small>
                 </div>
 
                 <div class="field">
