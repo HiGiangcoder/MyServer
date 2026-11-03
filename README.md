@@ -17,6 +17,12 @@
 - Danh sách thành viên + chấm xanh online (heartbeat 25s).
 - Tin nhắn tự cập nhật mỗi 2 giây (polling, không cần WebSocket).
 - Giao diện responsive, Enter để gửi, Shift+Enter xuống dòng.
+- **Gửi ảnh, tệp và cả thư mục**: chọn nhiều tệp hoặc chọn nguyên thư mục
+  (giữ cấu trúc thư mục), có thanh tiến trình. Ảnh hiển thị trực tiếp,
+  tệp khác hiện thẻ tải xuống.
+- **Tệp tạm tự xóa**: mỗi tệp hiển thị đếm ngược "Tự xóa sau …" ngay
+  trong tin nhắn. Hết hạn, tiến trình nền tự xóa tệp khỏi ổ đĩa.
+- **Biểu cảm**: bảng emoji chèn nhanh vào ô nhập.
 - Chống XSS: render bằng `textContent`; API yêu cầu CSRF token.
 
 Công nghệ: Flask + SQLite (`data/app.db`), giao diện vanilla JS/CSS,
@@ -27,6 +33,38 @@ cho người khác tự đăng ký.
 
 > Lưu ý: không có xác thực email, quên mật khẩu hay rate limiting. Phù hợp
 > cho nhóm nhỏ; muốn công khai rộng nên thêm các phần đó.
+
+## Tệp tạm & quyền admin
+
+- **Ai là admin?** Tài khoản đầu tiên đăng ký trên server (hoặc username
+  `admin` nếu DB đã có sẵn) tự động được gán `is_admin = 1`. Admin thấy
+  huy hiệu **Admin** cạnh tên và mục **Quản trị server** trong Cài đặt.
+- **Cấu hình của admin** (`/settings` → mục Quản trị server):
+  - Thư mục lưu tệp tạm trên server (đường dẫn tuyệt đối, phải ghi được).
+  - Thời gian lưu tệp (giờ) — mặc định 72 giờ.
+  - Kích thước tối đa mỗi tệp (MB) — mặc định 100 MB, tối đa 1024 MB.
+  - Tự động xóa tệp hết hạn (bật/tắt).
+  - Số ngày lưu tin nhắn (0 = giữ mãi), kèm nút xóa tin nhắn cũ / xóa toàn bộ.
+- **Quản lý tệp tạm** (`/admin/files`): sắp xếp theo nặng nhất / mới nhất /
+  sắp hết hạn / tên; chọn nhiều tệp để xóa thủ công; xem tổng dung lượng;
+  nút dọn ngay các tệp hết hạn.
+- Giới hạn cứng: tối đa 50 tệp mỗi tin nhắn, 2 GB mỗi request.
+- Tệp trong tin nhắn riêng chỉ người gửi, người nhận và admin tải được.
+  Tệp trong phòng chung thì mọi thành viên đã đăng nhập đều tải được.
+- Dữ liệu nằm ở `data/app.db` (metadata) và `data/uploads/` (nội dung tệp),
+  cả hai đều nằm trong `.gitignore`.
+
+### Upload tệp lớn qua nginx
+
+Nginx mặc định chặn body > 1 MB. Đã có script cấu hình lại (chạy 1 lần):
+
+```bash
+sudo ~/myserver/setup-nginx-upload.sh
+```
+
+Script đặt `client_max_body_size 2048m`, tăng timeout và tắt request
+buffering, sau đó `nginx -t` + reload. Gunicorn cũng đã được đặt
+`--timeout 300` trong `myserver.service` để upload lâu không bị cắt.
 
 ## Kiến trúc
 
@@ -49,11 +87,13 @@ Lấy URL công khai hiện tại:
 | Thành phần | Vị trí |
 |---|---|
 | Flask app (chat) | `~/myserver/app.py` |
-| Template | `templates/` (base, login, register, chat) |
+| Template | `templates/` (base, login, register, chat, settings, admin_files) |
 | Giao diện | `static/style.css`, `static/app.js` |
 | Database + secret | `data/app.db`, `data/secret_key` (đã gitignore) |
-| Gunicorn (3 worker) | systemd user unit `myserver.service` |
+| Tệp tạm upload | `data/uploads/` (đổi được trong trang admin) |
+| Gunicorn (3 worker) | systemd user unit `myserver.service` (`--timeout 300`) |
 | Nginx reverse proxy | `/etc/nginx/sites-available/myserver` |
+| Script bật upload lớn | `setup-nginx-upload.sh` |
 | Cập nhật DuckDNS | `~/duckdns/duck.sh` + cron `*/5 * * * *` |
 | Token DuckDNS | `~/duckdns/duck.token` (chmod 600) |
 | Log DuckDNS | `~/duckdns/duck.log` |
@@ -65,6 +105,9 @@ Lấy URL công khai hiện tại:
 systemctl --user status myserver
 systemctl --user restart myserver
 journalctl --user -u myserver -f
+
+# Kiểm thử tự động (dùng DB tạm, không đụng dữ liệu thật)
+cd ~/myserver && ./venv/bin/python tests/test_uploads.py
 
 # Nginx
 sudo nginx -t && sudo systemctl reload nginx
@@ -80,13 +123,25 @@ curl -H "Host: gianglab.duckdns.org" http://127.0.0.1/api/hello
 ### Dữ liệu chat
 
 ```bash
-# Xem nhanh số tài khoản / tin nhắn
+# Xem nhanh số tài khoản / tin nhắn / tệp tạm
 sqlite3 ~/myserver/data/app.db \
   "SELECT (SELECT COUNT(*) FROM users) AS users,
-          (SELECT COUNT(*) FROM messages) AS messages;"
+          (SELECT COUNT(*) FROM messages) AS messages,
+          (SELECT COUNT(*) FROM attachments) AS files;"
 
-# Backup
+# Dung lượng tệp tạm
+du -sh ~/myserver/data/uploads
+
+# Backup metadata (không gồm nội dung tệp)
 cp ~/myserver/data/app.db ~/myserver/data/app-$(date +%F).db
+
+# Backup kèm tệp tạm (nếu cần)
+tar czf ~/myserver-backup-$(date +%F).tar.gz \
+  -C ~/myserver data/app.db data/uploads data/secret_key
+```
+
+Muốn xóa tệp tạm ngay: vào `/admin/files` hoặc
+`/settings#admin` → **Dọn tệp hết hạn ngay**.
 
 # Xóa sạch toàn bộ tài khoản + tin nhắn (reset)
 systemctl --user stop myserver

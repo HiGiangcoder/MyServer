@@ -8,7 +8,7 @@
         <a href="{{ url_for('index') }}" class="icon-btn" title="Về phòng chat" aria-label="Về phòng chat">←</a>
         <div>
             <h1>Cài đặt</h1>
-            <span class="muted">@{{ me["username"] }}</span>
+            <span class="muted">@{{ me["username"] }}{% if me["is_admin"] %} · <span class="admin-badge">Admin</span>{% endif %}</span>
         </div>
     </header>
 
@@ -155,6 +155,96 @@
             <button type="submit" class="btn-primary">Lưu cài đặt chat</button>
         </form>
     </section>
+
+    {% if cfg %}
+    <section class="card admin-card" id="admin">
+        <h2>Quản trị server <span class="admin-badge">Admin</span></h2>
+        <p class="muted">Cấu hình lưu tệp tạm, thời hạn và vòng đời tin nhắn.</p>
+
+        <form method="post" action="{{ url_for('settings_admin') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+
+            <div class="form-grid">
+                <div class="field">
+                    <label for="upload_dir">Thư mục lưu tệp tạm</label>
+                    <input id="upload_dir" name="upload_dir" value="{{ cfg.upload_dir }}" required>
+                    <small class="hint">Đường dẫn tuyệt đối, user chạy app phải ghi được.</small>
+                </div>
+
+                <div class="field">
+                    <label for="retention_hours">Thời gian lưu tệp (giờ)</label>
+                    <input id="retention_hours" name="retention_hours" type="number"
+                           min="1" max="8760" value="{{ cfg.retention_hours }}">
+                    <small class="hint">Hết hạn thì tệp tự xóa. Mặc định 72 giờ.</small>
+                </div>
+
+                <div class="field">
+                    <label for="max_file_mb">Kích thước tối đa mỗi tệp (MB)</label>
+                    <input id="max_file_mb" name="max_file_mb" type="number"
+                           min="1" max="1024" value="{{ cfg.max_file_mb }}">
+                </div>
+
+                <div class="field">
+                    <label for="message_retention_days">Tự xóa tin nhắn sau (ngày)</label>
+                    <input id="message_retention_days" name="message_retention_days" type="number"
+                           min="0" max="3650" value="{{ cfg.message_retention_days }}">
+                    <small class="hint">0 = giữ tin nhắn mãi.</small>
+                </div>
+            </div>
+
+            <div class="toggles">
+                <label class="toggle-row">
+                    <span>
+                        <strong>Tự động xóa tệp hết hạn</strong>
+                        <small>Tiến trình nền chạy mỗi 60 giây</small>
+                    </span>
+                    <input type="checkbox" name="auto_delete" class="switch"
+                           {% if cfg.auto_delete %}checked{% endif %}>
+                </label>
+            </div>
+
+            <button type="submit" class="btn-primary">Lưu cấu hình server</button>
+        </form>
+
+        <div class="admin-actions">
+            <a class="btn-secondary" href="{{ url_for('admin_files') }}">Quản lý tệp tạm →</a>
+
+            <form method="post" action="{{ url_for('admin_cleanup') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf }}">
+                <button type="submit" class="btn-secondary">Dọn tệp hết hạn ngay</button>
+            </form>
+        </div>
+
+        <hr class="divider">
+
+        <h3>Xóa tin nhắn lưu trên server</h3>
+        <p class="muted">
+            Nếu đặt "Tự xóa tin nhắn sau (ngày)" &gt; 0, tiến trình nền sẽ tự xóa
+            tin cũ hơn số ngày đó. Có thể xóa thủ công ngay bên dưới.
+            Thao tác không thể hoàn tác.
+        </p>
+
+        <div class="admin-actions">
+            {% if cfg.message_retention_days > 0 %}
+            <form method="post" action="{{ url_for('admin_messages_purge') }}"
+                  onsubmit="return confirm('Xóa các tin nhắn cũ hơn {{ cfg.message_retention_days }} ngày?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf }}">
+                <input type="hidden" name="mode" value="old">
+                <button type="submit" class="btn-secondary">
+                    Xóa tin nhắn cũ hơn {{ cfg.message_retention_days }} ngày
+                </button>
+            </form>
+            {% endif %}
+
+            <form method="post" action="{{ url_for('admin_messages_purge') }}"
+                  onsubmit="return confirm('XÓA TOÀN BỘ tin nhắn trên server? Không thể hoàn tác.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf }}">
+                <input type="hidden" name="mode" value="all">
+                <button type="submit" class="btn-danger">Xóa toàn bộ tin nhắn</button>
+            </form>
+        </div>
+    </section>
+    {% endif %}
 
     <section class="card danger-zone">
         <h2>Xóa tài khoản</h2>

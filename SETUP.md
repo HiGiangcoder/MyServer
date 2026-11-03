@@ -83,33 +83,44 @@ templates/base.html       # layout chung
 templates/login.html
 templates/register.html
 templates/chat.html
+templates/settings.html
+templates/admin_files.html
 static/style.css
 static/app.js
+setup-nginx-upload.sh     # bật upload lớn qua nginx (chạy bằng sudo)
 ```
 
 Ứng dụng tự tạo `data/app.db` và `data/secret_key` ở lần chạy đầu tiên,
-không cần migration thủ công. Nếu DB cũ chưa có cột `settings`, app tự
-`ALTER TABLE` khi khởi động.
+không cần migration thủ công. Khi khởi động, app tự thêm các cột/bảng còn
+thiếu (`users.settings`, `users.is_admin`, `attachments`, `server_settings`)
+và tự gán admin cho username `admin` (hoặc user đầu tiên) nếu chưa có ai.
 
 Các route chính:
 
 | Route | Mô tả |
 |---|---|
 | `GET /` | Trang chat (yêu cầu đăng nhập) |
-| `GET/POST /register` | Đăng ký tài khoản |
+| `GET/POST /register` | Đăng ký tài khoản (user đầu tiên thành admin) |
 | `GET/POST /login` | Đăng nhập |
 | `POST /logout` | Đăng xuất (có CSRF) |
 | `GET /api/chat?since=<id>` | Tin phòng chung mới hơn `id` |
 | `POST /api/chat` | Gửi tin phòng chung |
 | `GET /api/dm/<username>?since=<id>` | Tin riêng với một người |
 | `POST /api/dm/<username>` | Gửi tin riêng |
+| `POST /api/upload` | Gửi tệp/thư mục kèm tin nhắn (multipart) |
+| `GET /files/<id>` | Tải/xem tệp đính kèm (kiểm tra quyền) |
 | `GET /api/users` | Danh sách thành viên + trạng thái online |
 | `POST /api/heartbeat` | Cập nhật "đang online" |
-| `GET /settings` | Trang cài đặt tài khoản + chat |
+| `GET /settings` | Cài đặt tài khoản + chat (+ admin) |
 | `POST /settings/profile` | Đổi tên hiển thị / username |
 | `POST /settings/password` | Đổi mật khẩu |
 | `POST /settings/prefs` | Lưu giao diện/cài đặt chat |
 | `POST /settings/delete` | Xóa tài khoản + toàn bộ tin nhắn |
+| `POST /settings/admin` | Lưu cấu hình server (chỉ admin) |
+| `GET /admin/files` | Quản lý tệp tạm (chỉ admin) |
+| `POST /admin/files/delete` | Xóa tệp đã chọn (chỉ admin) |
+| `POST /admin/cleanup` | Dọn tệp hết hạn ngay (chỉ admin) |
+| `POST /admin/messages/purge` | Xóa tin nhắn cũ/toàn bộ (chỉ admin) |
 | `GET /api/hello`, `/api/info` | API kiểm tra cũ |
 
 > Mọi API `POST` bắt buộc header `X-CSRF-Token` (giá trị lấy từ
@@ -125,13 +136,15 @@ Các route chính:
 │   ├── login.html
 │   ├── register.html
 │   ├── chat.html
-│   └── settings.html
+│   ├── settings.html
+│   └── admin_files.html
 ├── static/
 │   ├── style.css
 │   └── app.js
 └── data/                 # tự tạo, đã gitignore
     ├── app.db
-    └── secret_key
+    ├── secret_key
+    └── uploads/          # tệp gửi lên, tự xóa theo hạn
 ```
 
 ### 3.4. Chạy thử
@@ -173,6 +186,8 @@ Environment=PATH=/home/brolyn-ntg/myserver/venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/brolyn-ntg/myserver/venv/bin/gunicorn \
     --workers 3 \
     --bind 127.0.0.1:8000 \
+    --timeout 300 \
+    --graceful-timeout 30 \
     --access-logfile - \
     --error-logfile - \
     app:app
@@ -230,6 +245,10 @@ server {
 
     server_name gianglab.duckdns.org;
 
+    # Cho phép gửi tệp lớn (mặc định nginx chỉ 1 MB)
+    client_max_body_size 2048m;
+    client_body_timeout 300s;
+
     location / {
         proxy_pass http://127.0.0.1:8000;
 
@@ -237,8 +256,19 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Không đệm request body để upload lớn chuyển tiếp ngay
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 }
+```
+
+Nếu site đã tồn tại, chỉ cần chạy script có sẵn (tự chèn các dòng trên):
+
+```bash
+sudo ~/myserver/setup-nginx-upload.sh
 ```
 
 ### 5.2. Kích hoạt
@@ -615,6 +645,11 @@ Sau khi reboot, kiểm tra lại mục 1–4 mà không đăng nhập thủ côn
 | Service user tắt sau khi logout | Chưa bật linger: `sudo loginctl enable-linger "$USER"` |
 | DuckDNS không cập nhật | Chạy tay `~/duckdns/duck.sh`; xem `~/duckdns/duck.log`; kiểm tra `crontab -l` và `systemctl is-active cron` |
 | `ln: File exists` | Link sites-enabled đã tồn tại, bỏ qua |
+| Upload báo `413 Request Entity Too Large` | Nginx chưa nâng giới hạn: chạy `sudo ~/myserver/setup-nginx-upload.sh` rồi thử lại |
+| Upload lớn bị `502` / timeout | Kiểm tra gunicorn có `--timeout 300` và nginx có `proxy_read_timeout 300s`, `proxy_request_buffering off` |
+| Tệp biến mất sau vài ngày | Đúng cơ chế tệp tạm: xem hạn trong tin nhắn hoặc `/admin/files`; admin đổi thời gian lưu ở `/settings#admin` |
+| Không thấy mục Quản trị server | Tài khoản không phải admin. Kiểm tra `sqlite3 data/app.db "SELECT username,is_admin FROM users;"` |
+| Admin không xóa được tệp / tin nhắn | Hết phiên CSRF: tải lại trang rồi thao tác lại |
 
 ---
 
@@ -623,8 +658,12 @@ Sau khi reboot, kiểm tra lại mục 1–4 mà không đăng nhập thủ côn
 - **Không** đưa authtoken ngrok / token DuckDNS vào chat, ảnh chụp, git.
   Nếu đã lộ: tạo token mới trên dashboard và cập nhật lại file cấu hình.
 - `chmod 600` cho `~/.config/ngrok/ngrok.yml`, `~/duckdns/duck.token`.
-- App hiện **không có xác thực** — ai có URL là vào được. Nếu cần bảo vệ:
-  thêm HTTP Basic Auth trong nginx (`auth_basic` + `htpasswd`).
+- App có đăng nhập nội bộ, nhưng **ai có URL cũng có thể tự đăng ký**. Nếu chỉ
+  muốn nhóm kín: thêm HTTP Basic Auth trong nginx (`auth_basic` + `htpasswd`),
+  hoặc chặn route `/register`.
+- Chỉ tài khoản `is_admin = 1` mới vào được `/admin/files` và lưu cấu hình
+  server; các route này vẫn kiểm tra CSRF và quyền ở server.
+- Tệp tải lên nằm trong `data/uploads/`; không commit thư mục `data/`.
 - Không bật `debug=True` khi đã ra Internet.
 - Nếu mở SSH ra ngoài: dùng key, tắt `PasswordAuthentication`.
 - Cập nhật hệ thống định kỳ: `sudo apt update && sudo apt upgrade`.
@@ -641,14 +680,17 @@ Sau khi reboot, kiểm tra lại mục 1–4 mà không đăng nhập thủ côn
 │   ├── login.html
 │   ├── register.html
 │   ├── chat.html
-│   └── settings.html
+│   ├── settings.html
+│   └── admin_files.html
 ├── static/
 │   ├── style.css
 │   └── app.js
 ├── data/                           (tự tạo, gitignore)
 │   ├── app.db
-│   └── secret_key                  (chmod 600)
+│   ├── secret_key                  (chmod 600)
+│   └── uploads/                    (tệp tạm, tự xóa)
 ├── venv/
+├── setup-nginx-upload.sh
 ├── setup-ngrok.sh
 ├── setup-firewall.sh
 ├── url.sh

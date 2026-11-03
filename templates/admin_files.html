@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Quản lý tệp tạm — MyServer{% endblock %}
+{% block body_class %}settings-page{% endblock %}
+
+{% block body %}
+<div class="settings-wrap wide">
+    <header class="settings-head">
+        <a href="{{ url_for('settings_page') }}#admin" class="icon-btn" title="Về cài đặt" aria-label="Về cài đặt">←</a>
+        <div>
+            <h1>Quản lý tệp tạm</h1>
+            <span class="muted">
+                {{ files|length }} tệp · tổng {{ total|filesizeformat }} ·
+                lưu {{ cfg.retention_hours }} giờ
+            </span>
+        </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="flashes">
+                {% for category, message in messages %}
+                    <div class="alert {{ 'alert-ok' if category == 'ok' else '' }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <section class="card">
+        <div class="file-toolbar">
+            <div class="sort-links">
+                <span class="muted">Sắp xếp:</span>
+                <a href="?sort=size" class="{{ 'active' if sort == 'size' else '' }}">Nặng nhất</a>
+                <a href="?sort=date" class="{{ 'active' if sort == 'date' else '' }}">Mới nhất</a>
+                <a href="?sort=expires" class="{{ 'active' if sort == 'expires' else '' }}">Sắp hết hạn</a>
+                <a href="?sort=name" class="{{ 'active' if sort == 'name' else '' }}">Tên A→Z</a>
+            </div>
+
+            <form method="post" action="{{ url_for('admin_cleanup') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf }}">
+                <button type="submit" class="btn-secondary">Dọn tệp hết hạn</button>
+            </form>
+        </div>
+
+        {% if files %}
+        <form method="post" action="{{ url_for('admin_files_delete') }}"
+              onsubmit="return confirm('Xóa các tệp đã chọn? Không thể hoàn tác.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+
+            <div class="table-scroll">
+                <table class="file-table">
+                    <thead>
+                        <tr>
+                            <th class="check"><input type="checkbox" id="check-all" title="Chọn tất cả"></th>
+                            <th>Tệp</th>
+                            <th>Người gửi</th>
+                            <th>Kích thước</th>
+                            <th>Hết hạn</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in files %}
+                        <tr>
+                            <td class="check">
+                                <input type="checkbox" name="ids" value="{{ file['id'] }}" class="file-check">
+                            </td>
+                            <td>
+                                <a href="{{ url_for('download_file', attachment_id=file['id']) }}"
+                                   target="_blank" rel="noopener">
+                                    {{ file['relative_path'] or file['original_name'] }}
+                                </a>
+                                <div class="file-sub">{{ file['mime'] }}</div>
+                            </td>
+                            <td>@{{ file['username'] }}</td>
+                            <td class="nowrap">{{ file['size']|filesizeformat }}</td>
+                            <td class="nowrap" data-expires="{{ file['expires_at'] }}">
+                                {{ file['expires_at'] }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <button type="submit" class="btn-danger">Xóa tệp đã chọn</button>
+        </form>
+        {% else %}
+            <p class="muted">Chưa có tệp nào trên server.</p>
+        {% endif %}
+    </section>
+</div>
+
+<script>
+    document.getElementById("check-all")?.addEventListener("change", (event) => {
+        document.querySelectorAll(".file-check").forEach((box) => {
+            box.checked = event.target.checked;
+        });
+    });
+
+    function humanLeft(iso) {
+        const ms = new Date(iso).getTime() - Date.now();
+        if (!Number.isFinite(ms)) return "?";
+        if (ms <= 0) return "Đã hết hạn";
+        const mins = Math.floor(ms / 60000);
+        const days = Math.floor(mins / 1440);
+        const hours = Math.floor((mins % 1440) / 60);
+        if (days > 0) return `Còn ${days} ngày ${hours} giờ`;
+        if (hours > 0) return `Còn ${hours} giờ ${mins % 60} phút`;
+        return `Còn ${mins} phút`;
+    }
+
+    document.querySelectorAll("[data-expires]").forEach((el) => {
+        el.title = el.textContent.trim();
+        el.textContent = humanLeft(el.dataset.expires);
+    });
+</script>
+{% endblock %}

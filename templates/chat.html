@@ -23,6 +23,7 @@
             <div class="me-info">
                 <strong id="me-name"></strong>
                 <span id="me-handle"></span>
+                <span class="admin-badge" id="me-badge" hidden>Admin</span>
             </div>
             <a href="{{ url_for('settings_page') }}" class="icon-btn" title="Cài đặt" aria-label="Cài đặt">⚙</a>
             <form method="post" action="{{ url_for('logout') }}">
@@ -45,9 +46,26 @@
         <div class="messages" id="messages" aria-live="polite"></div>
 
         <form class="composer" id="composer">
-            <textarea id="input" rows="1" maxlength="2000"
-                      placeholder="Nhập tin nhắn… (Enter để gửi, Shift+Enter xuống dòng)"></textarea>
-            <button type="submit" class="btn-primary" id="send">Gửi</button>
+            <div class="composer-tools">
+                <button type="button" class="tool-btn" id="emoji-btn" title="Biểu cảm" aria-label="Biểu cảm">😊</button>
+                <button type="button" class="tool-btn" id="file-btn" title="Gửi tệp" aria-label="Gửi tệp">📎</button>
+                <button type="button" class="tool-btn" id="folder-btn" title="Gửi cả thư mục" aria-label="Gửi thư mục">📁</button>
+                <input type="file" id="file-input" multiple hidden>
+                <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
+                <span class="upload-hint" id="upload-hint"></span>
+            </div>
+
+            <div class="composer-row">
+                <textarea id="input" rows="1" maxlength="2000"
+                          placeholder="Nhập tin nhắn… (Enter để gửi, Shift+Enter xuống dòng)"></textarea>
+                <button type="submit" class="btn-primary" id="send">Gửi</button>
+            </div>
+
+            <div id="emoji-picker" class="emoji-picker" hidden></div>
+            <div id="selected-files" class="selected-files" hidden></div>
+            <div id="progress" class="upload-progress" hidden>
+                <div class="upload-progress-bar" id="progress-bar"></div>
+            </div>
         </form>
     </main>
 </div>
@@ -58,9 +76,11 @@
             "id": me["id"],
             "username": me["username"],
             "display_name": me["display_name"],
+            "is_admin": me["is_admin"] == 1,
         },
         "csrf": csrf,
         "settings": ui_prefs,
+        "config": upload_cfg,
     } | tojson }};
 </script>
 {% endblock %}

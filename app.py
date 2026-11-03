@@ -3,16 +3,21 @@ import os
 import re
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+import threading
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from flask import (
     Flask,
+    abort,
     flash,
     g,
     jsonify,
     redirect,
     render_template,
     request,
+    send_file,
     session,
     url_for,
 )
@@ -48,7 +53,7 @@ app.config.update(
     SECRET_KEY=load_secret_key(),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    MAX_CONTENT_LENGTH=64 * 1024,
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024 * 1024,
 )
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,20}$")
@@ -68,6 +73,16 @@ PREF_CHOICES = {
     "font_size": {"sm", "md", "lg"},
 }
 
+DEFAULT_CONFIG = {
+    "upload_dir": os.path.join(DATA_DIR, "uploads"),
+    "retention_hours": 72,
+    "max_file_mb": 100,
+    "message_retention_days": 0,
+    "auto_delete": True,
+}
+
+MAX_FILES_PER_MESSAGE = 50
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +91,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     last_seen     TEXT NOT NULL,
-    settings      TEXT NOT NULL DEFAULT '{}'
+    settings      TEXT NOT NULL DEFAULT '{}',
+    is_admin      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -87,8 +103,29 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS attachments (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id    INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    uploader_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    original_name TEXT NOT NULL,
+    relative_path TEXT,
+    stored_name   TEXT NOT NULL,
+    stored_path   TEXT NOT NULL,
+    size          INTEGER NOT NULL,
+    mime          TEXT,
+    created_at    TEXT NOT NULL,
+    expires_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS server_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_room ON messages(recipient_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id, id);
+CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_expires ON attachments(expires_at);
 """
 
 
@@ -102,6 +139,29 @@ def init_db():
             db.execute(
                 "ALTER TABLE users ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'"
             )
+        if "is_admin" not in columns:
+            db.execute(
+                "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+            )
+
+        # Nếu chưa có admin: ưu tiên username "admin", nếu không lấy user đầu tiên
+        has_admin = db.execute(
+            "SELECT COUNT(*) FROM users WHERE is_admin = 1"
+        ).fetchone()[0]
+        if not has_admin:
+            admin = db.execute(
+                "SELECT id FROM users WHERE username = 'admin' COLLATE NOCASE"
+            ).fetchone()
+            if admin is None:
+                admin = db.execute(
+                    "SELECT id FROM users ORDER BY id LIMIT 1"
+                ).fetchone()
+            if admin is not None:
+                db.execute(
+                    "UPDATE users SET is_admin = 1 WHERE id = ?", (admin[0],)
+                )
+
+    os.makedirs(DEFAULT_CONFIG["upload_dir"], exist_ok=True)
 
 
 init_db()
@@ -143,7 +203,7 @@ def current_user():
     if not user_id:
         return None
     return query(
-        "SELECT id, username, display_name, created_at, settings "
+        "SELECT id, username, display_name, created_at, settings, is_admin "
         "FROM users WHERE id = ?",
         (user_id,),
         one=True,
@@ -181,6 +241,253 @@ def inject_prefs():
     user = current_user()
     prefs = get_prefs(user) if user else dict(DEFAULT_PREFS)
     return {"ui_prefs": prefs}
+
+
+def admin_required(view):
+    def wrapped(*args, **kwargs):
+        if current_user() is None:
+            if wants_json():
+                return jsonify({"error": "Chưa đăng nhập"}), 401
+            return redirect(url_for("login"))
+
+        if not current_user()["is_admin"]:
+            if wants_json():
+                return jsonify({"error": "Chỉ admin được phép"}), 403
+            abort(403)
+
+        return view(*args, **kwargs)
+
+    wrapped.__name__ = view.__name__
+    return wrapped
+
+
+# --------------------------------------------------------------------------
+# Cấu hình server (admin)
+# --------------------------------------------------------------------------
+
+
+def get_config():
+    row = query(
+        "SELECT value FROM server_settings WHERE key = 'config'", one=True
+    )
+    raw = {}
+    if row:
+        try:
+            loaded = json.loads(row["value"])
+            if isinstance(loaded, dict):
+                raw = loaded
+        except (TypeError, ValueError):
+            raw = {}
+
+    cfg = dict(DEFAULT_CONFIG)
+
+    upload_dir = raw.get("upload_dir")
+    if isinstance(upload_dir, str) and upload_dir.strip():
+        cfg["upload_dir"] = upload_dir.strip()
+
+    try:
+        cfg["retention_hours"] = max(
+            1, min(24 * 365, int(raw.get("retention_hours", cfg["retention_hours"])))
+        )
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        cfg["max_file_mb"] = max(
+            1, min(1024, int(raw.get("max_file_mb", cfg["max_file_mb"])))
+        )
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        cfg["message_retention_days"] = max(
+            0,
+            min(
+                3650,
+                int(raw.get("message_retention_days", cfg["message_retention_days"])),
+            ),
+        )
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(raw.get("auto_delete"), bool):
+        cfg["auto_delete"] = raw["auto_delete"]
+
+    return cfg
+
+
+def normalize_config(data):
+    cfg = dict(DEFAULT_CONFIG)
+
+    upload_dir = str(data.get("upload_dir") or "").strip()
+    if not upload_dir:
+        upload_dir = DEFAULT_CONFIG["upload_dir"]
+    if not os.path.isabs(upload_dir):
+        upload_dir = os.path.join(BASE_DIR, upload_dir)
+    cfg["upload_dir"] = os.path.normpath(upload_dir)
+
+    def as_int(key, low, high, fallback):
+        try:
+            return max(low, min(high, int(data.get(key, fallback))))
+        except (TypeError, ValueError):
+            return fallback
+
+    cfg["retention_hours"] = as_int("retention_hours", 1, 24 * 365, 72)
+    cfg["max_file_mb"] = as_int("max_file_mb", 1, 1024, 100)
+    cfg["message_retention_days"] = as_int(
+        "message_retention_days", 0, 3650, 0
+    )
+    cfg["auto_delete"] = bool(data.get("auto_delete"))
+    return cfg
+
+
+def save_config(cfg):
+    execute(
+        "INSERT INTO server_settings (key, value) VALUES ('config', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (json.dumps(cfg),),
+    )
+
+
+def ensure_upload_dir(cfg):
+    path = cfg["upload_dir"]
+    os.makedirs(path, exist_ok=True)
+    if not os.access(path, os.W_OK):
+        raise OSError(f"Thư mục không ghi được: {path}")
+    return path
+
+
+# --------------------------------------------------------------------------
+# Tệp đính kèm + dọn dẹp
+# --------------------------------------------------------------------------
+
+
+def safe_remove(path):
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def serialize_attachment(row):
+    mime = row["mime"] or ""
+    return {
+        "id": row["id"],
+        "name": row["relative_path"] or row["original_name"],
+        "size": row["size"],
+        "mime": mime,
+        "is_image": mime.startswith("image/"),
+        "expires_at": row["expires_at"],
+        "url": url_for("download_file", attachment_id=row["id"]),
+    }
+
+
+def with_attachments(messages):
+    ids = [m["id"] for m in messages]
+    if not ids:
+        return messages
+
+    placeholders = ",".join("?" for _ in ids)
+    rows = query(
+        f"SELECT * FROM attachments WHERE message_id IN ({placeholders}) ORDER BY id",
+        ids,
+    )
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(row["message_id"], []).append(
+            serialize_attachment(row)
+        )
+
+    for message in messages:
+        message["attachments"] = grouped.get(message["id"], [])
+    return messages
+
+
+def delete_messages_where(where_sql, args=()):
+    total = 0
+    while True:
+        rows = query(
+            f"SELECT id FROM messages WHERE {where_sql} ORDER BY id LIMIT 5000",
+            args,
+        )
+        ids = [row["id"] for row in rows]
+        if not ids:
+            return total
+
+        placeholders = ",".join("?" for _ in ids)
+        files = query(
+            f"SELECT stored_path FROM attachments WHERE message_id IN ({placeholders})",
+            ids,
+        )
+        for file_row in files:
+            safe_remove(file_row["stored_path"])
+
+        execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
+        total += len(ids)
+
+        if len(ids) < 5000:
+            return total
+
+
+def cleanup_expired(force=False):
+    cfg = get_config()
+    removed = 0
+
+    if cfg["auto_delete"] or force:
+        now = now_iso()
+        expired = query(
+            "SELECT id, stored_path FROM attachments WHERE expires_at <= ?", (now,)
+        )
+        for row in expired:
+            safe_remove(row["stored_path"])
+        if expired:
+            execute("DELETE FROM attachments WHERE expires_at <= ?", (now,))
+            removed += len(expired)
+
+    # Tin nhắn không còn nội dung và không còn tệp (chỉ xóa tin cũ hơn 1 giờ
+    # để không đụng vào upload đang được ghi dở)
+    empty_cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=1)
+    ).isoformat(timespec="seconds")
+    execute(
+        "DELETE FROM messages WHERE body = '' AND created_at < ? "
+        "AND id NOT IN (SELECT message_id FROM attachments)",
+        (empty_cutoff,),
+    )
+
+    if cfg["message_retention_days"] > 0:
+        cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(days=cfg["message_retention_days"])
+        ).isoformat(timespec="seconds")
+        removed += delete_messages_where("created_at < ?", (cutoff,))
+
+    return removed
+
+
+_cleanup_started = False
+
+
+def start_cleanup_thread():
+    global _cleanup_started
+    if os.environ.get("MYSERVER_DISABLE_CLEANUP") == "1":
+        return
+    if _cleanup_started:
+        return
+    _cleanup_started = True
+
+    def loop():
+        time.sleep(15)
+        while True:
+            try:
+                with app.app_context():
+                    cleanup_expired()
+            except Exception:
+                pass
+            time.sleep(60)
+
+    threading.Thread(target=loop, daemon=True, name="cleanup").start()
 
 
 def wants_json():
@@ -246,7 +553,7 @@ def fetch_room_messages(me_id, since):
         """,
         (since,),
     )
-    return [serialize_message(r, me_id) for r in rows]
+    return with_attachments([serialize_message(r, me_id) for r in rows])
 
 
 def fetch_dm_messages(me_id, peer_id, since):
@@ -268,7 +575,7 @@ def fetch_dm_messages(me_id, peer_id, since):
         """,
         (me_id, peer_id, peer_id, me_id, since),
     )
-    return [serialize_message(r, me_id) for r in rows]
+    return with_attachments([serialize_message(r, me_id) for r in rows])
 
 
 def parse_since():
@@ -298,7 +605,16 @@ def read_json_body():
 @login_required
 def index():
     me = current_user()
-    return render_template("chat.html", me=me, csrf=ensure_csrf())
+    cfg = get_config()
+    return render_template(
+        "chat.html",
+        me=me,
+        csrf=ensure_csrf(),
+        upload_cfg={
+            "max_file_mb": cfg["max_file_mb"],
+            "retention_hours": cfg["retention_hours"],
+        },
+    )
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -342,6 +658,11 @@ def register():
             user = query(
                 "SELECT id FROM users WHERE username = ?", (username,), one=True
             )
+            # Người dùng đầu tiên trên server mới trở thành admin
+            if query(
+                "SELECT COUNT(*) AS n FROM users WHERE is_admin = 1", one=True
+            )["n"] == 0:
+                execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user["id"],))
             session["user_id"] = user["id"]
             session["csrf"] = secrets.token_urlsafe(32)
             return redirect(url_for("index"))
@@ -400,7 +721,11 @@ def logout():
 def settings_page():
     me = current_user()
     return render_template(
-        "settings.html", me=me, prefs=get_prefs(me), csrf=ensure_csrf()
+        "settings.html",
+        me=me,
+        prefs=get_prefs(me),
+        csrf=ensure_csrf(),
+        cfg=get_config() if me["is_admin"] else None,
     )
 
 
@@ -493,6 +818,21 @@ def settings_delete():
     if confirm_text != "XOA":
         flash('Gõ chính xác "XOA" để xác nhận xóa tài khoản.', "error")
         return redirect(url_for("settings_page"))
+
+    # Xóa tệp trên ổ đĩa trước khi CASCADE xóa tin nhắn + attachment rows
+    files = query(
+        """
+        SELECT stored_path FROM attachments
+        WHERE uploader_id = ?
+           OR message_id IN (
+                SELECT id FROM messages
+                WHERE sender_id = ? OR recipient_id = ?
+           )
+        """,
+        (me["id"], me["id"], me["id"]),
+    )
+    for file_row in files:
+        safe_remove(file_row["stored_path"])
 
     # FOREIGN KEY ON DELETE CASCADE xóa luôn tin nhắn của người này
     execute("DELETE FROM users WHERE id = ?", (me["id"],))
@@ -618,7 +958,8 @@ def api_chat_post():
         (cur.lastrowid,),
         one=True,
     )
-    return jsonify({"message": serialize_message(row, me["id"])}), 201
+    message = with_attachments([serialize_message(row, me["id"])])[0]
+    return jsonify({"message": message}), 201
 
 
 @app.get("/api/dm/<username>")
@@ -681,7 +1022,318 @@ def api_dm_post(username):
         (cur.lastrowid,),
         one=True,
     )
-    return jsonify({"message": serialize_message(row, me["id"])}), 201
+    message = with_attachments([serialize_message(row, me["id"])])[0]
+    return jsonify({"message": message}), 201
+
+
+# --------------------------------------------------------------------------
+# Tệp đính kèm
+# --------------------------------------------------------------------------
+
+
+def clean_relative_path(raw):
+    raw = (raw or "").replace("\\", "/")
+    parts = []
+    for part in raw.split("/"):
+        part = part.strip()
+        if part in ("", ".", ".."):
+            continue
+        parts.append(part[:120])
+    return "/".join(parts)[:250]
+
+
+@app.post("/api/upload")
+@login_required
+def api_upload():
+    if not valid_csrf():
+        return jsonify({"error": "CSRF token không hợp lệ"}), 403
+
+    me = current_user()
+    touch_user(me["id"])
+
+    target = request.form.get("target", "room")
+    body = (request.form.get("body") or "").strip()
+    if len(body) > MAX_MESSAGE_LEN:
+        return jsonify({"error": "Nội dung tin nhắn quá dài"}), 400
+
+    recipient_id = None
+    if target == "dm":
+        username = (request.form.get("username") or "").strip()
+        peer = query(
+            "SELECT id FROM users WHERE username = ? COLLATE NOCASE",
+            (username,),
+            one=True,
+        )
+        if peer is None:
+            return jsonify({"error": "Không tìm thấy người dùng"}), 404
+        if peer["id"] == me["id"]:
+            return jsonify({"error": "Không thể tự nhắn tin cho chính mình"}), 400
+        recipient_id = peer["id"]
+
+    files = [f for f in request.files.getlist("files") if f and f.filename]
+    if len(files) > MAX_FILES_PER_MESSAGE:
+        return jsonify(
+            {"error": f"Tối đa {MAX_FILES_PER_MESSAGE} tệp mỗi tin nhắn"}
+        ), 400
+    if not files and not body:
+        return jsonify({"error": "Chưa có nội dung hoặc tệp"}), 400
+
+    cfg = get_config()
+    try:
+        upload_dir = ensure_upload_dir(cfg)
+    except OSError as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    message_id = execute(
+        "INSERT INTO messages (sender_id, recipient_id, body, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (me["id"], recipient_id, body, now_iso()),
+    ).lastrowid
+
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(hours=cfg["retention_hours"])
+    ).isoformat(timespec="seconds")
+    max_bytes = cfg["max_file_mb"] * 1024 * 1024
+    saved_paths = []
+
+    try:
+        for storage in files:
+            rel = clean_relative_path(storage.filename)
+            original = (rel.split("/")[-1] or "file")[:180]
+            ext = os.path.splitext(original)[1][:16]
+            stored_name = uuid.uuid4().hex + ext
+            dest = os.path.join(upload_dir, stored_name)
+            saved_paths.append(dest)
+
+            size = 0
+            with open(dest, "wb") as out:
+                while True:
+                    chunk = storage.stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise ValueError(
+                            f"Tệp “{original}” vượt quá {cfg['max_file_mb']} MB"
+                        )
+                    out.write(chunk)
+
+            execute(
+                """
+                INSERT INTO attachments
+                    (message_id, uploader_id, original_name, relative_path,
+                     stored_name, stored_path, size, mime, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    me["id"],
+                    original,
+                    rel,
+                    stored_name,
+                    dest,
+                    size,
+                    storage.mimetype or "application/octet-stream",
+                    now_iso(),
+                    expires_at,
+                ),
+            )
+    except ValueError as exc:
+        for path in saved_paths:
+            safe_remove(path)
+        execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        return jsonify({"error": str(exc)}), 413
+    except OSError:
+        for path in saved_paths:
+            safe_remove(path)
+        execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        return jsonify({"error": "Không ghi được tệp lên server"}), 500
+
+    row = query(
+        """
+        SELECT m.id, m.body, m.created_at, m.sender_id,
+               u.username, u.display_name
+        FROM messages m JOIN users u ON u.id = m.sender_id
+        WHERE m.id = ?
+        """,
+        (message_id,),
+        one=True,
+    )
+    message = with_attachments([serialize_message(row, me["id"])])[0]
+    return jsonify({"message": message}), 201
+
+
+@app.get("/files/<int:attachment_id>")
+@login_required
+def download_file(attachment_id):
+    row = query(
+        """
+        SELECT a.*, m.sender_id AS message_sender, m.recipient_id
+        FROM attachments a
+        JOIN messages m ON m.id = a.message_id
+        WHERE a.id = ?
+        """,
+        (attachment_id,),
+        one=True,
+    )
+    if row is None:
+        abort(404)
+
+    me = current_user()
+    if (
+        row["recipient_id"] is not None
+        and not me["is_admin"]
+        and me["id"] not in (row["message_sender"], row["recipient_id"])
+    ):
+        abort(403)
+
+    if not os.path.isfile(row["stored_path"]):
+        abort(404)
+
+    mime = row["mime"] or ""
+    # SVG có thể chứa script khi mở trực tiếp -> luôn tải xuống, không inline
+    inline = mime.startswith("image/") and mime != "image/svg+xml"
+    response = send_file(
+        row["stored_path"],
+        mimetype=mime or None,
+        as_attachment=not inline,
+        download_name=row["original_name"],
+        conditional=True,
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+# --------------------------------------------------------------------------
+# Quản trị (admin)
+# --------------------------------------------------------------------------
+
+
+@app.post("/settings/admin")
+@admin_required
+def settings_admin():
+    if not valid_csrf():
+        flash("Phiên làm việc đã hết hạn, vui lòng thử lại.", "error")
+        return redirect(url_for("settings_page") + "#admin")
+
+    cfg = normalize_config(request.form)
+    try:
+        ensure_upload_dir(cfg)
+    except OSError as exc:
+        flash(f"Không dùng được thư mục lưu tệp: {exc}", "error")
+        return redirect(url_for("settings_page") + "#admin")
+
+    save_config(cfg)
+    flash("Đã lưu cấu hình server.", "ok")
+    return redirect(url_for("settings_page") + "#admin")
+
+
+@app.get("/admin/files")
+@admin_required
+def admin_files():
+    sort = request.args.get("sort", "size")
+    order = {
+        "size": "a.size DESC",
+        "date": "a.created_at DESC",
+        "name": "a.original_name COLLATE NOCASE ASC",
+        "expires": "a.expires_at ASC",
+    }.get(sort, "a.size DESC")
+
+    files = query(
+        f"""
+        SELECT a.*, u.username, u.display_name
+        FROM attachments a
+        JOIN users u ON u.id = a.uploader_id
+        ORDER BY {order}
+        """
+    )
+    total = sum(row["size"] for row in files)
+
+    return render_template(
+        "admin_files.html",
+        me=current_user(),
+        files=files,
+        total=total,
+        sort=sort,
+        cfg=get_config(),
+        csrf=ensure_csrf(),
+    )
+
+
+@app.post("/admin/files/delete")
+@admin_required
+def admin_files_delete():
+    if not valid_csrf():
+        flash("Phiên làm việc đã hết hạn, vui lòng thử lại.", "error")
+        return redirect(url_for("admin_files"))
+
+    ids = []
+    for raw in request.form.getlist("ids"):
+        try:
+            ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+
+    if not ids:
+        flash("Chưa chọn tệp nào.", "error")
+        return redirect(url_for("admin_files"))
+
+    placeholders = ",".join("?" for _ in ids)
+    rows = query(
+        f"SELECT stored_path FROM attachments WHERE id IN ({placeholders})", ids
+    )
+    for row in rows:
+        safe_remove(row["stored_path"])
+
+    execute(f"DELETE FROM attachments WHERE id IN ({placeholders})", ids)
+    execute(
+        "DELETE FROM messages WHERE body = '' "
+        "AND id NOT IN (SELECT message_id FROM attachments)"
+    )
+
+    flash(f"Đã xóa {len(rows)} tệp.", "ok")
+    return redirect(url_for("admin_files"))
+
+
+@app.post("/admin/cleanup")
+@admin_required
+def admin_cleanup():
+    if not valid_csrf():
+        flash("Phiên làm việc đã hết hạn, vui lòng thử lại.", "error")
+        return redirect(url_for("admin_files"))
+
+    removed = cleanup_expired(force=True)
+    flash(f"Đã dọn {removed} mục hết hạn.", "ok")
+    return redirect(url_for("admin_files"))
+
+
+@app.post("/admin/messages/purge")
+@admin_required
+def admin_messages_purge():
+    if not valid_csrf():
+        flash("Phiên làm việc đã hết hạn, vui lòng thử lại.", "error")
+        return redirect(url_for("settings_page") + "#admin")
+
+    mode = request.form.get("mode")
+
+    if mode == "all":
+        removed = delete_messages_where("1 = 1")
+        flash(f"Đã xóa toàn bộ {removed} tin nhắn.", "ok")
+    else:
+        days = get_config()["message_retention_days"]
+        if days <= 0:
+            flash(
+                "Chưa đặt số ngày lưu tin nhắn (đang là 0 = giữ mãi).", "error"
+            )
+            return redirect(url_for("settings_page") + "#admin")
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).isoformat(timespec="seconds")
+        removed = delete_messages_where("created_at < ?", (cutoff,))
+        flash(f"Đã xóa {removed} tin nhắn cũ hơn {days} ngày.", "ok")
+
+    return redirect(url_for("settings_page") + "#admin")
 
 
 # --------------------------------------------------------------------------
@@ -708,6 +1360,9 @@ def info():
 @app.errorhandler(413)
 def too_large(_err):
     return jsonify({"error": "Dữ liệu gửi lên quá lớn"}), 413
+
+
+start_cleanup_thread()
 
 
 if __name__ == "__main__":

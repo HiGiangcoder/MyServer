@@ -3,6 +3,9 @@
 
     const { me, csrf } = window.APP;
     const settings = window.APP.settings || {};
+    const appConfig = window.APP.config || {};
+    const maxFileMb = Number(appConfig.max_file_mb) || 100;
+    const maxTotalBytes = 2 * 1024 * 1024 * 1024; // khớp MAX_CONTENT_LENGTH
     const enterToSend = settings.enter_to_send !== false;
     const els = {
         messages: document.getElementById("messages"),
@@ -21,6 +24,17 @@
         meAvatar: document.getElementById("me-avatar"),
         meName: document.getElementById("me-name"),
         meHandle: document.getElementById("me-handle"),
+        meBadge: document.getElementById("me-badge"),
+        emojiBtn: document.getElementById("emoji-btn"),
+        emojiPicker: document.getElementById("emoji-picker"),
+        fileBtn: document.getElementById("file-btn"),
+        folderBtn: document.getElementById("folder-btn"),
+        fileInput: document.getElementById("file-input"),
+        folderInput: document.getElementById("folder-input"),
+        uploadHint: document.getElementById("upload-hint"),
+        selectedFiles: document.getElementById("selected-files"),
+        progress: document.getElementById("progress"),
+        progressBar: document.getElementById("progress-bar"),
     };
 
     const state = {
@@ -28,6 +42,8 @@
         lastId: 0,
         seen: new Set(),
         sending: false,
+        uploading: false,
+        files: [],
         lastAuthor: null,
         lastTime: 0,
         mounted: false,
@@ -52,6 +68,62 @@
         if (Number.isNaN(d.getTime())) return "";
         return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
     }
+
+    function formatSize(bytes) {
+        const n = Number(bytes) || 0;
+        if (n < 1024) return `${n} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+        return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    }
+
+    function fileIcon(name) {
+        const ext = String(name).split(".").pop().toLowerCase();
+        if (["zip", "rar", "7z", "tar", "gz", "bz2"].includes(ext)) return "🗜️";
+        if (["pdf"].includes(ext)) return "📕";
+        if (["doc", "docx", "odt"].includes(ext)) return "📘";
+        if (["xls", "xlsx", "csv", "ods"].includes(ext)) return "📗";
+        if (["ppt", "pptx"].includes(ext)) return "📙";
+        if (["mp4", "mkv", "mov", "avi", "webm"].includes(ext)) return "🎬";
+        if (["mp3", "wav", "flac", "ogg", "m4a"].includes(ext)) return "🎵";
+        if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(ext)) return "🖼️";
+        return "📄";
+    }
+
+    function humanLeft(iso) {
+        const ms = new Date(iso).getTime() - Date.now();
+        if (!Number.isFinite(ms)) return "";
+        if (ms <= 0) return "Đã hết hạn";
+
+        const total = Math.floor(ms / 1000);
+        const days = Math.floor(total / 86400);
+        const hours = Math.floor((total % 86400) / 3600);
+        const mins = Math.floor((total % 3600) / 60);
+
+        if (days > 0) return `Tự xóa sau ${days} ngày ${hours} giờ`;
+        if (hours > 0) return `Tự xóa sau ${hours} giờ ${mins} phút`;
+        if (mins > 0) return `Tự xóa sau ${mins} phút`;
+        return `Tự xóa sau ${total} giây`;
+    }
+
+    function refreshExpiries(root = document) {
+        root.querySelectorAll("[data-expires]").forEach((el) => {
+            const text = humanLeft(el.dataset.expires);
+            if (text) {
+                el.textContent = text;
+                el.classList.toggle("expired", text === "Đã hết hạn");
+            }
+        });
+    }
+
+    const EMOJIS = [
+        "😀", "😂", "🤣", "😊", "😍", "😘", "😎", "🤩",
+        "🥳", "😭", "😅", "🙃", "😴", "🤔", "🤯", "😱",
+        "😡", "🥺", "😇", "🤗", "👍", "👎", "👏", "🙌",
+        "🙏", "💪", "🤝", "✌️", "🤞", "👌", "❤️", "🧡",
+        "💛", "💚", "💙", "💜", "🖤", "💔", "💯", "🔥",
+        "✨", "🎉", "🎁", "☕", "🍕", "🍺", "⚡", "🚀",
+    ];
 
     function setStatus(ok, text) {
         els.status.classList.toggle("off", !ok);
@@ -149,6 +221,76 @@
         }
     }
 
+    function buildAttachments(list) {
+        const box = document.createElement("div");
+        box.className = "attachments";
+
+        list.forEach((att) => {
+            if (att.is_image) {
+                const wrapper = document.createElement("div");
+                wrapper.className = "attachment-image";
+
+                const link = document.createElement("a");
+                link.href = att.url;
+                link.target = "_blank";
+                link.rel = "noopener";
+
+                const img = document.createElement("img");
+                img.src = att.url;
+                img.alt = att.name;
+                img.loading = "lazy";
+                img.title = att.name;
+
+                link.appendChild(img);
+                wrapper.appendChild(link);
+
+                const expiry = document.createElement("div");
+                expiry.className = "attachment-expiry";
+                expiry.dataset.expires = att.expires_at;
+                expiry.textContent = humanLeft(att.expires_at);
+                wrapper.appendChild(expiry);
+
+                box.appendChild(wrapper);
+                return;
+            }
+
+            const link = document.createElement("a");
+            link.className = "attachment-file";
+            link.href = att.url;
+            link.target = "_blank";
+            link.rel = "noopener";
+            link.download = att.name.split("/").pop();
+
+            const icon = document.createElement("span");
+            icon.className = "attachment-icon";
+            icon.textContent = fileIcon(att.name);
+
+            const meta = document.createElement("div");
+            meta.className = "attachment-meta";
+
+            const name = document.createElement("span");
+            name.className = "attachment-name";
+            name.textContent = att.name;
+            name.title = att.name;
+
+            const sub = document.createElement("span");
+            sub.className = "attachment-sub";
+            sub.textContent = formatSize(att.size);
+
+            meta.append(name, sub);
+            link.append(icon, meta);
+
+            const expiry = document.createElement("div");
+            expiry.className = "attachment-expiry";
+            expiry.dataset.expires = att.expires_at;
+            expiry.textContent = humanLeft(att.expires_at);
+
+            box.append(link, expiry);
+        });
+
+        return box;
+    }
+
     function appendMessage(msg, options = {}) {
         const { forceScroll = false } = options;
         const stick = forceScroll || nearBottom();
@@ -184,10 +326,16 @@
             wrap.appendChild(author);
         }
 
-        const bubble = document.createElement("div");
-        bubble.className = "bubble";
-        bubble.textContent = msg.body; // textContent => chống XSS
-        wrap.appendChild(bubble);
+        if (msg.body) {
+            const bubble = document.createElement("div");
+            bubble.className = "bubble";
+            bubble.textContent = msg.body; // textContent => chống XSS
+            wrap.appendChild(bubble);
+        }
+
+        if (Array.isArray(msg.attachments) && msg.attachments.length) {
+            wrap.appendChild(buildAttachments(msg.attachments));
+        }
 
         const time = document.createElement("div");
         time.className = "msg-time";
@@ -339,12 +487,196 @@
         markActiveUser();
     }
 
+    function clearFiles() {
+        state.files = [];
+        els.fileInput.value = "";
+        els.folderInput.value = "";
+        renderFiles();
+        els.uploadHint.textContent = "";
+    }
+
+    function renderFiles() {
+        els.selectedFiles.innerHTML = "";
+
+        if (state.files.length === 0) {
+            els.selectedFiles.hidden = true;
+            return;
+        }
+
+        els.selectedFiles.hidden = false;
+        let total = 0;
+
+        state.files.forEach((file, index) => {
+            total += file.size;
+
+            const chip = document.createElement("div");
+            chip.className = "file-chip";
+
+            const icon = document.createElement("span");
+            icon.textContent = fileIcon(file.name);
+
+            const name = document.createElement("span");
+            name.className = "chip-name";
+            name.textContent = file.webkitRelativePath || file.name;
+            name.title = name.textContent;
+
+            const size = document.createElement("span");
+            size.className = "chip-size";
+            size.textContent = formatSize(file.size);
+
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.textContent = "✕";
+            remove.title = "Bỏ chọn";
+            remove.addEventListener("click", () => {
+                state.files.splice(index, 1);
+                renderFiles();
+                updateUploadHint();
+            });
+
+            chip.append(icon, name, size, remove);
+            els.selectedFiles.appendChild(chip);
+        });
+
+        updateUploadHint();
+    }
+
+    function updateUploadHint() {
+        if (!state.files.length) {
+            els.uploadHint.textContent = "";
+            return;
+        }
+        const total = state.files.reduce((sum, file) => sum + file.size, 0);
+        els.uploadHint.textContent = `${state.files.length} tệp • ${formatSize(total)}`;
+    }
+
+    function addFiles(fileList) {
+        const incoming = Array.from(fileList || []);
+        const tooBig = [];
+        let overTotal = false;
+        let totalBytes = state.files.reduce((sum, file) => sum + file.size, 0);
+
+        for (const file of incoming) {
+            if (file.size > maxFileMb * 1024 * 1024) {
+                tooBig.push(file.name);
+                continue;
+            }
+
+            const key = `${file.webkitRelativePath || file.name}|${file.size}`;
+            const exists = state.files.some(
+                (f) => `${f.webkitRelativePath || f.name}|${f.size}` === key
+            );
+            if (exists) continue;
+
+            if (totalBytes + file.size > maxTotalBytes) {
+                overTotal = true;
+                break;
+            }
+
+            if (state.files.length >= 50) break;
+            state.files.push(file);
+            totalBytes += file.size;
+        }
+
+        renderFiles();
+
+        if (tooBig.length) {
+            els.uploadHint.textContent =
+                `Bỏ qua ${tooBig.length} tệp vượt ${maxFileMb} MB`;
+        } else if (overTotal) {
+            els.uploadHint.textContent =
+                "Tổng dung lượng vượt 2 GB, đã bỏ qua phần còn lại";
+        }
+    }
+
+    function uploadFiles(body) {
+        if (state.uploading) return;
+
+        state.uploading = true;
+        state.sending = true;
+        els.send.disabled = true;
+        els.progress.hidden = false;
+        els.progressBar.style.width = "0%";
+
+        const form = new FormData();
+        form.append("target", state.conv.kind === "room" ? "room" : "dm");
+        if (state.conv.kind === "dm") {
+            form.append("username", state.conv.username);
+        }
+        if (body) form.append("body", body);
+        form.append("csrf_token", csrf);
+
+        state.files.forEach((file) => {
+            form.append("files", file, file.webkitRelativePath || file.name);
+        });
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/upload");
+        xhr.setRequestHeader("X-CSRF-Token", csrf);
+        xhr.responseType = "json";
+
+        xhr.upload.onprogress = (event) => {
+            if (!event.lengthComputable) return;
+            const percent = Math.round((event.loaded / event.total) * 100);
+            els.progressBar.style.width = percent + "%";
+            els.uploadHint.textContent = `Đang gửi ${percent}%`;
+        };
+
+        xhr.onload = () => {
+            if (xhr.status === 401) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const data = xhr.response || {};
+            if (xhr.status >= 200 && xhr.status < 300 && data.message) {
+                const msg = data.message;
+                if (!state.seen.has(msg.id)) {
+                    state.seen.add(msg.id);
+                    state.lastId = Math.max(state.lastId, msg.id);
+                    appendMessage(msg, { forceScroll: true });
+                }
+                els.input.value = "";
+                autosize();
+                clearFiles();
+                setStatus(true);
+                refreshExpiries();
+            } else {
+                const message =
+                    (data && data.error) || `Gửi tệp thất bại (${xhr.status})`;
+                setStatus(false, message);
+                els.uploadHint.textContent = message;
+            }
+        };
+
+        xhr.onerror = () => {
+            setStatus(false, "Lỗi mạng khi gửi tệp");
+            els.uploadHint.textContent = "Lỗi mạng khi gửi tệp";
+        };
+
+        xhr.onloadend = () => {
+            state.uploading = false;
+            state.sending = false;
+            els.send.disabled = false;
+            els.progress.hidden = true;
+            els.progressBar.style.width = "0%";
+            els.input.focus();
+        };
+
+        xhr.send(form);
+    }
+
     async function sendMessage(event) {
         event.preventDefault();
-        if (state.sending) return;
+        if (state.sending || state.uploading) return;
 
         const body = els.input.value.trim();
-        if (!body) return;
+        if (!body && state.files.length === 0) return;
+
+        if (state.files.length > 0) {
+            uploadFiles(body);
+            return;
+        }
 
         state.sending = true;
         els.send.disabled = true;
@@ -393,6 +725,27 @@
         els.sidebar.classList.remove("open");
     }
 
+    function buildEmojiPicker() {
+        if (els.emojiPicker.childElementCount > 0) return;
+        EMOJIS.forEach((emoji) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = emoji;
+            els.emojiPicker.appendChild(button);
+        });
+    }
+
+    function insertEmoji(emoji) {
+        const start = els.input.selectionStart ?? els.input.value.length;
+        const end = els.input.selectionEnd ?? els.input.value.length;
+        els.input.value =
+            els.input.value.slice(0, start) + emoji + els.input.value.slice(end);
+        const position = start + emoji.length;
+        els.input.focus();
+        els.input.setSelectionRange(position, position);
+        autosize();
+    }
+
     function bind() {
         els.composer.addEventListener("submit", sendMessage);
 
@@ -409,6 +762,41 @@
                 event.preventDefault();
                 els.composer.requestSubmit();
             }
+        });
+
+        els.fileBtn.addEventListener("click", () => els.fileInput.click());
+        els.folderBtn.addEventListener("click", () => els.folderInput.click());
+
+        els.fileInput.addEventListener("change", (event) => {
+            addFiles(event.target.files);
+            event.target.value = "";
+        });
+
+        els.folderInput.addEventListener("change", (event) => {
+            addFiles(event.target.files);
+            event.target.value = "";
+        });
+
+        els.emojiBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            buildEmojiPicker();
+            els.emojiPicker.hidden = !els.emojiPicker.hidden;
+        });
+
+        els.emojiPicker.addEventListener("click", (event) => {
+            const button = event.target.closest("button");
+            if (button) insertEmoji(button.textContent);
+        });
+
+        document.addEventListener("click", (event) => {
+            if (els.emojiPicker.hidden) return;
+            if (
+                els.emojiPicker.contains(event.target) ||
+                els.emojiBtn.contains(event.target)
+            ) {
+                return;
+            }
+            els.emojiPicker.hidden = true;
         });
 
         els.roomBtn.addEventListener("click", openRoom);
@@ -441,6 +829,7 @@
         els.meAvatar.textContent = initialOf(me.display_name);
         els.meName.textContent = me.display_name;
         els.meHandle.textContent = "@" + me.username; // me.username is safe text
+        if (me.is_admin) els.meBadge.hidden = false;
     }
 
     async function boot() {
@@ -462,8 +851,10 @@
         }
 
         await loadUsers();
+        refreshExpiries();
         setInterval(poll, 2000);
         setInterval(loadUsers, 10000);
+        setInterval(() => refreshExpiries(), 30000);
         setInterval(() => {
             if (document.visibilityState === "visible") {
                 api("/api/heartbeat", { method: "POST" }).catch(() => {});
